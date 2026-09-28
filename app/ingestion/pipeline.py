@@ -25,6 +25,30 @@ from app.ingestion.sources.base import SourceDocument
 from app.providers.embeddings import get_embedding_provider
 
 
+def compute_document_metadata(
+    title: str,
+    full_text: str,
+    published_date: date | None,
+) -> dict:
+    """Document-level metadata (domain + temporal), consistent across chunks."""
+    domain = classify_domain(title + ". " + full_text)
+    start_year, end_year = infer_year_range(full_text, published_date=published_date)
+    event_start, event_end = extract_event_window(
+        full_text, title=title, published_date=published_date
+    )
+    return {
+        "energy_type": domain.energy_type,
+        "market_layer": domain.market_layer,
+        "geography": domain.geography,
+        "sector": domain.sector,
+        "start_year": start_year,
+        "end_year": end_year,
+        "event_start_date": event_start,
+        "event_end_date": event_end,
+        "mentioned_years": extract_mentioned_years(full_text),
+    }
+
+
 def store_source_document(
     doc: SourceDocument,
     *,

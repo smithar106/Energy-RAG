@@ -429,27 +429,26 @@ def admin_reset_rag() -> ResetResponse:
 
 @app.post("/admin/backfill")
 def admin_backfill() -> dict:
-    """Populate energy-domain + temporal metadata for existing chunks."""
-    from app.ingestion.domain import classify_domain
-    from app.ingestion.metadata import extract_event_window, extract_mentioned_years
+    """Populate energy-domain + temporal metadata for existing chunks (document-level)."""
+    from app.ingestion.pipeline import compute_document_metadata
 
     with session_scope() as session:
-        chunks = session.query(Chunk).all()
+        docs = session.query(Document).all()
         updated = 0
-        for chunk in chunks:
-            blob = f"{chunk.document_title or ''}. {chunk.text or ''}"
-            domain = classify_domain(blob)
-            event_start, event_end = extract_event_window(
-                chunk.text or "", title=chunk.document_title or "", published_date=chunk.published_date
-            )
-            chunk.energy_type = domain.energy_type
-            chunk.market_layer = domain.market_layer
-            chunk.geography = domain.geography
-            chunk.sector = domain.sector
-            chunk.mentioned_years = extract_mentioned_years(blob)
-            chunk.event_start_date = event_start
-            chunk.event_end_date = event_end
-            updated += 1
+        for doc in docs:
+            full_text = doc.title + ". " + " ".join(ch.text for ch in doc.chunks)
+            meta = compute_document_metadata(doc.title, full_text, doc.published_date)
+            for chunk in doc.chunks:
+                chunk.energy_type = meta["energy_type"]
+                chunk.market_layer = meta["market_layer"]
+                chunk.geography = meta["geography"]
+                chunk.sector = meta["sector"]
+                chunk.start_year = meta["start_year"]
+                chunk.end_year = meta["end_year"]
+                chunk.event_start_date = meta["event_start_date"]
+                chunk.event_end_date = meta["event_end_date"]
+                chunk.mentioned_years = meta["mentioned_years"]
+                updated += 1
         session.commit()
     return {"backfilled_chunks": updated}
 

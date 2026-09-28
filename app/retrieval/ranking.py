@@ -234,10 +234,6 @@ def gate_chunks(
         if et and cet and cet in MISMATCH_ENERGY.get(et, set()):
             reasons.append("energy domain mismatch")
 
-        # Geography mismatch.
-        if intent.geography and c.get("geography") == "international":
-            reasons.append("geography mismatch")
-
         # Temporal gate (causal questions with a specific event).
         if intent.is_causal and context_start and context_end:
             es, ee = _chunk_window(c)
