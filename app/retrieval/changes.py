@@ -93,10 +93,10 @@ def largest_changes(
     January change still uses the previous December, even across the boundary).
     """
     order_col = "pct_change" if metric == "percent" else "abs_change"
+    # NULL percent changes (zero previous) are never "largest".
+    nulls = " NULLS LAST" if metric == "percent" else ""
     order_dir = "DESC" if direction == "increase" else "ASC"
-    if metric == "percent":
-        # NULL percent changes (zero previous) are never "largest".
-        order_col = "pct_change NULLS LAST"
+    order_clause = f"{order_col} {order_dir}{nulls}"
 
     params: dict = {"sid": series_id, "k": k}
     current_clause = ""
@@ -135,7 +135,7 @@ def largest_changes(
         FROM ordered
         WHERE prev_price IS NOT NULL
           {current_clause}
-        ORDER BY {order_col} {order_dir}
+        ORDER BY {order_clause}
         LIMIT :k
     """
 
