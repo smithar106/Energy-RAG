@@ -1,41 +1,35 @@
-"""Hybrid ranking: semantic + temporal + source authority, with diversity.
+"""Composite reranking + evidence gate.
 
-The score is explicit and inspectable — no opaque framework:
+Composite score (inspectable, not an opaque framework):
 
-    final_score = W_semantic * semantic_similarity
-                + W_temporal * temporal_score
-                + W_authority * source_authority
+    final = w_sem*semantic + w_lex*lexical + w_temp*temporal
+          + w_dom*domain + w_met*metric + w_geo*geography + w_auth*authority
 
-Component definitions
----------------------
-semantic_similarity : cosine similarity from pgvector, in [0, 1].
-temporal_score      : 0.5 when the query has no period or the chunk has no event
-                      window; otherwise 0.5 + 0.5 * coverage * specificity,
-                      which strongly prefers a chunk whose event window is as
-                      *specific* as the query. A document narrowly about 2017
-                      (span 1) scores far above one broadly tagged 2007–2020.
-source_authority    : EIA = 1.0, DOE/government = 0.9, other = 0.6, Wikipedia
-                      = 0.4 (supplementary).
-
-After ranking, ``select_evidence`` applies:
-  - an evidence threshold (chunks below it are rejected → refusal path), and
-  - document diversity (one chunk per document first, then up to
-    ``max_per_doc`` per document, so the final evidence spans several sources).
+The **evidence gate** then applies HARD, absolute filters (independent of how
+bad the other candidates are): energy-domain mismatch, geography mismatch, and
+— for causal questions with a specific event — temporal relevance. A chunk that
+fails the gate is rejected even if its composite score is relatively high.
 """
 from __future__ import annotations
 
-from app.retrieval.temporal import TimePeriod
+import re
+from datetime import date
+
+from app.retrieval.intent import RetrievalIntent
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "semantic": 0.60,
-    "temporal": 0.25,
-    "authority": 0.15,
+    "semantic": 0.28,
+    "lexical": 0.18,
+    "temporal": 0.16,
+    "domain": 0.14,
+    "metric": 0.06,
+    "geography": 0.06,
+    "authority": 0.12,
 }
 
 RANKING_FORMULA = (
-    "final_score = 0.60*semantic_similarity "
-    "+ 0.25*temporal_score "
-    "+ 0.15*source_authority"
+    "final = 0.28*semantic + 0.18*lexical + 0.16*temporal + 0.14*domain "
+    "+ 0.06*metric + 0.06*geography + 0.12*authority"
 )
 
 SOURCE_AUTHORITY: dict[str, float] = {
@@ -48,9 +42,15 @@ SOURCE_AUTHORITY: dict[str, float] = {
 }
 DEFAULT_AUTHORITY = 0.6
 
-MIN_EVIDENCE_SCORE = 0.50     # below this a chunk is rejected
-RELATIVE_FLOOR = 0.60         # for diversity, a new doc must reach best*floor
-MAX_PER_DOCUMENT = 3          # cap chunks per document in the final evidence
+# Hard energy-type mismatches for gating (candidate retrieval already filters,
+# but the gate is authoritative).
+MISMATCH_ENERGY = {
+    "electricity": {"gasoline", "petroleum"},
+    "natural_gas": {"gasoline"},
+    "petroleum": {"electricity", "gasoline"},
+    "gasoline": {"electricity", "coal"},
+    "coal": {"gasoline", "petroleum"},
+}
 
 
 def authority_for(source_name: str | None) -> float:
@@ -65,7 +65,7 @@ def temporal_score(
     chunk_start_year: int | None,
     chunk_end_year: int | None,
 ) -> tuple[float, str, dict]:
-    """Return (score, reason, components) for the temporal component."""
+    """Year-level temporal relevance (coverage × specificity)."""
     if query_start_year is None and query_end_year is None:
         return 0.5, "no_query_period", {"coverage": 0.0, "specificity": 0.0}
 
@@ -84,55 +84,112 @@ def temporal_score(
 
     if overlap <= 0:
         gap = min(abs(qs - ce), abs(cs - qe))
-        score = max(0.0, 0.5 - 0.1 * gap)
-        return round(score, 4), "gap", {
+        return round(max(0.0, 0.5 - 0.1 * gap), 4), "gap", {
             "coverage": 0.0, "specificity": 0.0,
             "query_span": query_span, "chunk_span": chunk_span, "gap": gap,
         }
 
     coverage = min(1.0, overlap / query_span)
     specificity = min(1.0, query_span / chunk_span)
-    score = 0.5 + 0.5 * coverage * specificity
-    return round(score, 4), "overlap", {
-        "coverage": round(coverage, 3),
-        "specificity": round(specificity, 3),
-        "query_span": query_span,
-        "chunk_span": chunk_span,
-        "overlap": overlap,
+    return round(0.5 + 0.5 * coverage * specificity, 4), "overlap", {
+        "coverage": round(coverage, 3), "specificity": round(specificity, 3),
+        "query_span": query_span, "chunk_span": chunk_span, "overlap": overlap,
     }
+
+
+def _lexical_overlap(query_text: str, text: str) -> float:
+    terms = {t for t in re.findall(r"[a-z0-9]{2,}", (query_text or "").lower())}
+    if not terms:
+        return 0.0
+    ttext = (text or "").lower()
+    return sum(1 for t in terms if t in ttext) / len(terms)
+
+
+def _energy_domain_score(intent: RetrievalIntent, chunk: dict) -> float:
+    et = intent.energy_type
+    cet = chunk.get("energy_type")
+    if not et:
+        return 0.5
+    if not cet:
+        return 0.5
+    if cet == et:
+        return 1.0
+    if cet == "multi_energy":
+        return 0.7
+    if et == "electricity" and cet in {"natural_gas", "coal"}:
+        return 0.7
+    if et == "natural_gas" and cet == "electricity":
+        return 0.6
+    return 0.0
+
+
+def _metric_score(intent: RetrievalIntent, chunk: dict) -> float:
+    m = intent.market_layer
+    cm = chunk.get("market_layer")
+    if not m:
+        return 0.5
+    if not cm:
+        return 0.5
+    if cm == m:
+        return 1.0
+    if m == "retail_price" and cm in {"fuel_cost", "generation", "wholesale_price"}:
+        return 0.6
+    return 0.3
+
+
+def _geography_score(intent: RetrievalIntent, chunk: dict) -> float:
+    g = intent.geography
+    cg = chunk.get("geography")
+    if not g:
+        return 0.5
+    if not cg:
+        return 0.5
+    return 1.0 if cg == g else 0.0
 
 
 def rank_chunks(
     candidates: list[dict],
     *,
-    period: TimePeriod,
+    intent: RetrievalIntent,
+    query_text: str,
     top_n: int | None = None,
     weights: dict[str, float] | None = None,
 ) -> list[dict]:
-    """Score and sort candidates by the hybrid score (no truncation if top_n=None)."""
     weights = weights or DEFAULT_WEIGHTS
-    qs = period.start.year if period.start else None
-    qe = period.end.year if period.end else None
+    qs = intent.event_start.year if intent.event_start else None
+    qe = intent.event_end.year if intent.event_end else None
 
     ranked: list[dict] = []
     for candidate in candidates:
         semantic = float(candidate.get("similarity", 0.0))
-        temporal, reason, meta = temporal_score(
+        lexical = _lexical_overlap(query_text, candidate.get("text", ""))
+        temporal, t_reason, t_meta = temporal_score(
             qs, qe, candidate.get("start_year"), candidate.get("end_year")
         )
+        domain = _energy_domain_score(intent, candidate)
+        metric = _metric_score(intent, candidate)
+        geography = _geography_score(intent, candidate)
         authority = authority_for(candidate.get("source_name"))
         final = (
             weights["semantic"] * semantic
+            + weights["lexical"] * lexical
             + weights["temporal"] * temporal
+            + weights["domain"] * domain
+            + weights["metric"] * metric
+            + weights["geography"] * geography
             + weights["authority"] * authority
         )
         record = dict(candidate)
         record.update(
             {
                 "semantic_similarity": round(semantic, 4),
+                "lexical_score": round(lexical, 4),
                 "temporal_score": temporal,
-                "temporal_reason": reason,
-                "temporal_meta": meta,
+                "temporal_reason": t_reason,
+                "temporal_meta": t_meta,
+                "domain_score": round(domain, 4),
+                "metric_score": round(metric, 4),
+                "geography_score": round(geography, 4),
                 "authority_score": authority,
                 "final_score": round(final, 4),
             }
@@ -143,42 +200,92 @@ def rank_chunks(
     return ranked[:top_n] if top_n is not None else ranked
 
 
-def select_evidence(
+def _chunk_window(chunk: dict) -> tuple[date | None, date | None]:
+    es = chunk.get("event_start_date")
+    ee = chunk.get("event_end_date")
+    if isinstance(es, str):
+        es = date.fromisoformat(es)
+    if isinstance(ee, str):
+        ee = date.fromisoformat(ee)
+    if es is None and chunk.get("start_year"):
+        es = date(int(chunk["start_year"]), 1, 1)
+    if ee is None and chunk.get("end_year"):
+        ee = date(int(chunk["end_year"]), 12, 31)
+    return es, ee
+
+
+def gate_chunks(
     ranked: list[dict],
+    *,
+    intent: RetrievalIntent,
+) -> tuple[list[dict], list[dict]]:
+    """Hard evidence gate. Returns (passed, rejected) with reasons."""
+    passed: list[dict] = []
+    rejected: list[dict] = []
+    context_start = intent.context_start
+    context_end = intent.context_end
+
+    for c in ranked:
+        reasons: list[str] = []
+
+        # Domain mismatch.
+        et = intent.energy_type
+        cet = c.get("energy_type")
+        if et and cet and cet in MISMATCH_ENERGY.get(et, set()):
+            reasons.append("energy domain mismatch")
+
+        # Geography mismatch.
+        if intent.geography and c.get("geography") == "international":
+            reasons.append("geography mismatch")
+
+        # Temporal gate (causal questions with a specific event).
+        if intent.is_causal and context_start and context_end:
+            es, ee = _chunk_window(c)
+            pub = c.get("published_date")
+            if isinstance(pub, str):
+                pub = date.fromisoformat(pub)
+            relevant = False
+            if es and ee:
+                relevant = ee >= context_start and es <= context_end
+            elif pub:
+                relevant = context_start <= pub <= context_end
+            if not relevant:
+                reasons.append("no temporal relevance to event")
+
+        if reasons:
+            c = dict(c)
+            c["gate"] = "FAIL"
+            c["failure_reason"] = "; ".join(reasons)
+            rejected.append(c)
+        else:
+            c = dict(c)
+            c["gate"] = "PASS"
+            c["failure_reason"] = None
+            passed.append(c)
+
+    return passed, rejected
+
+
+def apply_diversity(
+    passed: list[dict],
     top_n: int,
     *,
-    min_score: float = MIN_EVIDENCE_SCORE,
-    relative_floor: float = RELATIVE_FLOOR,
-    max_per_doc: int = MAX_PER_DOCUMENT,
-) -> tuple[list[dict], list[dict]]:
-    """Return (accepted, rejected) applying threshold + document diversity."""
-    if not ranked:
-        return [], []
-    best = ranked[0]["final_score"]
-
+    max_per_doc: int = 3,
+) -> list[dict]:
+    """Diversify gate-passed chunks (one per document first, then fill)."""
     accepted: list[dict] = []
-    rejected: list[dict] = []
     counts: dict = {}
     chosen: set = set()
-
-    def acceptable(c: dict) -> bool:
-        return c["final_score"] >= min_score and c["final_score"] >= best * relative_floor
-
-    # Pass 1: at most one chunk per document (document diversity first).
-    for c in ranked:
+    for c in passed:
         if len(accepted) >= top_n:
             break
         doc = c.get("document_id")
         if doc in counts:
             continue
-        if not acceptable(c):
-            continue
         accepted.append(c)
         counts[doc] = 1
         chosen.add(c["id"])
-
-    # Pass 2: fill remaining slots up to max_per_doc.
-    for c in ranked:
+    for c in passed:
         if len(accepted) >= top_n:
             break
         if c["id"] in chosen:
@@ -186,11 +293,7 @@ def select_evidence(
         doc = c.get("document_id")
         if counts.get(doc, 0) >= max_per_doc:
             continue
-        if not acceptable(c):
-            continue
         accepted.append(c)
         counts[doc] = counts.get(doc, 0) + 1
         chosen.add(c["id"])
-
-    rejected = [c for c in ranked if c["id"] not in chosen]
-    return accepted, rejected
+    return accepted

@@ -1,37 +1,25 @@
 """Tool implementations executed by the orchestrator.
 
-Every tool result is either SQL-derived data (numbers, with explicit
-observation pairs) or pgvector-retrieved evidence. Nothing is model-generated.
-
-The evidence tool's private ``_trace`` payload (query embedding, ranking
-scores, accept/reject state) is consumed by the orchestrator and stripped before
-the result is sent to the LLM.
+Every tool result is either SQL-derived data (with explicit observation pairs)
+or retrieved evidence. The evidence tool runs the three-stage retrieval
+(vector + lexical → rerank → evidence gate) and returns the accepted chunks to
+the LLM, while attaching a private ``_trace`` (scores, gate decisions) for the
+RAG trace.
 """
 from __future__ import annotations
 
 import json
 
 from app.retrieval.changes import largest_changes
-from app.retrieval.query_builder import build_retrieval_query
 from app.retrieval.service import retrieve
 from app.retrieval.sql import default_series_id, deterministic_calculation, structured_price_query
 from app.retrieval.temporal import TimePeriod, parse_time_period
 
 # Safe to expose to the LLM (no URLs → cannot invent citations; no embeddings).
 _LLM_CHUNK_FIELDS = (
-    "id",
-    "document_title",
-    "section",
-    "source_name",
-    "source_type",
-    "published_date",
-    "start_year",
-    "end_year",
-    "semantic_similarity",
-    "temporal_score",
-    "authority_score",
-    "final_score",
-    "text",
+    "id", "document_title", "section", "source_name", "source_type",
+    "published_date", "start_year", "end_year", "energy_type", "market_layer",
+    "final_score", "text",
 )
 
 
@@ -43,6 +31,18 @@ def _period_dict(period: TimePeriod) -> dict:
     return {
         "start": period.start.isoformat() if period.start else None,
         "end": period.end.isoformat() if period.end else None,
+    }
+
+
+def _intent_dict(intent) -> dict:
+    return {
+        "energy_type": intent.energy_type,
+        "market_layer": intent.market_layer,
+        "geography": intent.geography,
+        "sector": intent.sector,
+        "event_start": intent.event_start.isoformat() if intent.event_start else None,
+        "event_end": intent.event_end.isoformat() if intent.event_end else None,
+        "is_causal": intent.is_causal,
     }
 
 
@@ -83,24 +83,35 @@ def tool_find_largest_change(args: dict) -> dict:
     }
 
 
-def tool_evidence_search(args: dict, sql_results: list[dict] | None = None) -> dict:
-    semantic_query = args["query"]
+def tool_evidence_search(
+    args: dict,
+    sql_results: list[dict] | None,
+    question: str,
+) -> dict:
     period = _period_from_arg(args.get("period"))
-    enriched_query = build_retrieval_query(semantic_query, sql_results or [], period)
+    semantic_query = args["query"]
 
-    result = retrieve(enriched_query, period)
+    result = retrieve(
+        question=question,
+        semantic_query=semantic_query,
+        sql_results=sql_results or [],
+        period=period,
+    )
+
     public = {
-        "retrieval_query": result.retrieval_query,
-        "requested_period": _period_dict(result.period),
+        "retrieval_query": semantic_query,
         "candidate_count": result.candidate_count,
         "accepted_count": len(result.ranked),
+        "insufficient_evidence": len(result.ranked) == 0,
         "chunks": _shape_for_llm(result.ranked),
     }
     trace = {
-        "retrieval_query": result.retrieval_query,
-        "requested_period": _period_dict(result.period),
+        "intent": _intent_dict(result.intent),
+        "queries": result.queries,
         "query_embedding": result.query_embedding,
         "embedding_dim": len(result.query_embedding),
+        "vector_count": result.vector_count,
+        "lexical_count": result.lexical_count,
         "candidate_count": result.candidate_count,
         "accepted_count": len(result.ranked),
         "top_n": result.top_n,
@@ -120,14 +131,19 @@ TOOL_DISPATCH = {
 }
 
 
-def execute_tool(name: str, arguments: str, sql_results: list[dict] | None = None) -> dict:
+def execute_tool(
+    name: str,
+    arguments: str,
+    sql_results: list[dict] | None = None,
+    question: str = "",
+) -> dict:
     args = json.loads(arguments or "{}")
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
         return {"error": f"unknown tool: {name}"}
     try:
         if name == "evidence_search":
-            return fn(args, sql_results)
+            return fn(args, sql_results, question)
         return fn(args)
     except Exception as exc:
         return {"error": str(exc)}

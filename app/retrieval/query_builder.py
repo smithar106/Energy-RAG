@@ -1,83 +1,75 @@
-"""Retrieval query construction.
+"""Data-aware retrieval query expansion.
 
-The model may draft a semantic query, but the structured dimensions returned
-from SQL (energy type, metric, geography, sector, time window, identified
-event) are injected programmatically so retrieval is always anchored to the
-actual series being discussed.
+Generates MULTIPLE retrieval queries from the structured intent + semantic
+query (never hard-coded for a specific year), so vector + lexical search cover
+different facets of the question (event, fuel costs, demand, weather, mix).
 """
 from __future__ import annotations
 
-from app.retrieval.series import series_meta
-from app.retrieval.temporal import TimePeriod
+from datetime import date
 
-# Driver concepts that explain electricity/energy price movements.
+from app.retrieval.intent import RetrievalIntent
+
+_MONTHS = {
+    1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+    7: "July", 8: "August", 9: "September", 10: "October", 11: "November",
+    12: "December",
+}
+
 ELECTRICITY_CONCEPTS = (
     "electricity generation costs fuel costs natural gas coal "
-    "electricity demand weather generation mix utility costs "
-    "retail electricity prices"
+    "electricity demand weather generation mix utility costs"
 )
 
 
-def _series_from_sql(sql_results: list[dict]) -> str | None:
-    for res in sql_results or []:
-        change = res.get("price_change")
-        if change and change.get("series_id"):
-            return change["series_id"]
-        changes = res.get("changes")
-        if changes:
-            return changes[0].get("series_id")
-        rows = res.get("rows") or []
-        if rows and rows[0].get("series_id"):
-            return rows[0]["series_id"]
+def _event_label(intent: RetrievalIntent) -> str | None:
+    if intent.event_start and intent.event_end:
+        if intent.event_start.year == intent.event_end.year:
+            return f"{_MONTHS[intent.event_start.month]} {intent.event_start.year}"
+        return f"{intent.event_start.year} to {intent.event_end.year}"
     return None
 
 
-def _event_from_sql(sql_results: list[dict]) -> str | None:
-    for res in sql_results or []:
-        changes = res.get("changes")
-        if changes:
-            c = changes[0]
-            prev = (c.get("previous_period") or "")[:7]
-            curr = (c.get("current_period") or "")[:7]
-            label = f"largest month-over-month {res.get('direction', 'increase')} {prev} to {curr}"
-            return label
-    return None
-
-
-def build_retrieval_query(
+def build_retrieval_queries(
     semantic_query: str,
-    sql_results: list[dict],
-    period: TimePeriod,
-) -> str:
-    """Compose the final retrieval query from the model query + SQL dimensions."""
-    parts: list[str] = []
+    intent: RetrievalIntent,
+) -> list[str]:
+    """Return a list of retrieval queries for the intent."""
+    queries: list[str] = []
     if semantic_query:
-        parts.append(semantic_query.strip())
+        queries.append(semantic_query.strip())
 
-    series_id = _series_from_sql(sql_results)
-    meta = series_meta(series_id)
+    energy = intent.energy_type or "energy"
+    metric = intent.market_layer or "price"
+    geo = intent.geography or ""
+    year = intent.event_start.year if intent.event_start else None
+    event = _event_label(intent)
 
-    dims: list[str] = []
-    if meta.energy_type:
-        dims.append(meta.energy_type)
-    if meta.metric:
-        dims.append(meta.metric)
-    if meta.geography:
-        dims.append(meta.geography)
-    if meta.sector:
-        dims.append(meta.sector)
+    def join(*parts: str) -> str:
+        return " ".join(p for p in parts if p)
 
-    if period.is_bounded:
-        ys = period.start.year if period.start else period.end.year
-        ye = period.end.year if period.end else ys
-        dims.append(str(ys) if ys == ye else f"{ys} {ye}")
-        dims.append(f"context {ys - 1} to {ye + 1}")
+    if event and year:
+        queries.append(join(energy, metric, geo, event, "increase"))
+        queries.append(join(geo, energy, "prices", event, "generation fuel costs"))
+        queries.append(join("EIA", energy, "prices", event, "natural gas generation coal"))
+        queries.append(join(str(year), geo, energy, "demand weather generation costs"))
+        queries.append(join(str(year), energy, metric, "increase EIA drivers"))
+    elif year:
+        queries.append(join(energy, metric, geo, str(year), "increase"))
+        queries.append(join(geo, energy, "prices", str(year), "generation fuel costs"))
+        queries.append(join(str(year), energy, "demand weather generation costs"))
 
-    event = _event_from_sql(sql_results)
-    if event:
-        dims.append(event)
+    if energy == "electricity":
+        for q in list(queries):
+            if "natural gas" not in q and "generation costs" not in q:
+                queries.append(join(q, ELECTRICITY_CONCEPTS))
 
-    if meta.energy_type in (None, "electricity"):
-        dims.append(ELECTRICITY_CONCEPTS)
-
-    return " ".join(p for p in parts if p) + " " + " ".join(dims)
+    # Dedupe, preserve order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        key = q.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(q)
+    return out

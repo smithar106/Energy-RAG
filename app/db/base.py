@@ -76,6 +76,24 @@ def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     models.Base.metadata.create_all(bind=engine)
+    _apply_migrations(engine)
+
+
+_RAG_MIGRATIONS = [
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS energy_type VARCHAR(32)",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS market_layer VARCHAR(32)",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS geography VARCHAR(64)",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS sector VARCHAR(32)",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS mentioned_years JSONB",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS event_start_date DATE",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS event_end_date DATE",
+]
+
+
+def _apply_migrations(engine) -> None:
+    with engine.begin() as conn:
+        for stmt in _RAG_MIGRATIONS:
+            conn.execute(text(stmt))
 
 
 def reset_rag_tables() -> None:

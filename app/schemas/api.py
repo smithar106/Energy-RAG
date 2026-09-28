@@ -57,33 +57,48 @@ class ChunkTrace(BaseModel):
     published_date: date | None = None
     start_year: int | None = None
     end_year: int | None = None
-    semantic_similarity: float
-    temporal_score: float
+    event_start_date: date | None = None
+    event_end_date: date | None = None
+    energy_type: str | None = None
+    market_layer: str | None = None
+    geography: str | None = None
+    sector: str | None = None
+    semantic_similarity: float = 0.0
+    lexical_score: float = 0.0
+    temporal_score: float = 0.0
     temporal_reason: str | None = None
     temporal_coverage: float | None = None
     temporal_specificity: float | None = None
     chunk_span: int | None = None
-    authority_score: float
-    final_score: float
+    domain_score: float = 0.0
+    metric_score: float = 0.0
+    geography_score: float = 0.0
+    authority_score: float = 0.0
+    final_score: float = 0.0
+    gate: str | None = None
+    failure_reason: str | None = None
+    from_vector: bool = False
+    from_lexical: bool = False
     accepted: bool = False
-    rejection_reason: str | None = None
     passed_to_llm: bool = False
     text: str
 
 
 class RAGTrace(BaseModel):
     question: str
-    requested_period: dict
-    retrieval_query: str | None = None
+    intent: dict = Field(default_factory=dict)
+    requested_period: dict = Field(default_factory=dict)
+    queries: list[str] = Field(default_factory=list)
     embedding_model: str
     embedding_dim: int
     query_embedding: list[float] = Field(default_factory=list)
+    vector_count: int = 0
+    lexical_count: int = 0
     candidate_count: int = 0
     accepted_count: int = 0
     top_n: int = 0
     ranking_weights: dict = Field(default_factory=dict)
     ranking_formula: str = ""
-    generated_retrieval_query: str | None = None
     chunks: list[ChunkTrace] = Field(default_factory=list)
 
 

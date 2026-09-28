@@ -25,6 +25,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -105,6 +106,17 @@ class Chunk(Base):
     # Event window (inferred from source content, NOT the publication date).
     start_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     end_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+    # Fine-grained temporal metadata (event dates + all mentioned years).
+    event_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    event_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    mentioned_years: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # Energy-domain metadata (inferred; enables domain gating at retrieval).
+    energy_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    market_layer: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    geography: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=True)

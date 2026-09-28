@@ -58,7 +58,7 @@ class AgentOrchestrator:
             for call in tool_calls:
                 name = call["name"]
                 arguments = call["arguments"]
-                result = execute_tool(name, arguments, sql_results)
+                result = execute_tool(name, arguments, sql_results, question)
                 calls_log.append({"name": name, "arguments": arguments})
 
                 if name in {"structured_price_lookup", "deterministic_calculation"}:

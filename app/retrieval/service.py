@@ -1,27 +1,32 @@
-"""Retrieval service — the inspectable two-stage RAG retrieval pipeline.
+"""Three-stage hybrid retrieval service.
 
-    Stage 1  retrieval query → local embedding → pgvector candidates (30–50)
-    Stage 2  hybrid ranking (semantic + temporal + authority)
-             → evidence threshold + document diversity → accepted top-N
+    VECTOR CANDIDATES (pgvector)  +  LEXICAL CANDIDATES (tsvector)
+              └────────── merge ──────────┘
+                         │
+                    RERANK (composite score)
+                         │
+                   EVIDENCE GATE (hard filters)
+                         │
+                   ACCEPTED EVIDENCE (diversity)
 
-Returns a :class:`RetrievalResult` carrying the accepted evidence and the full
-candidate list (with component scores and accept/reject state) for the trace.
+Returns an inspectable :class:`RetrievalResult` with every stage.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.agent.prompts import build_retrieval_query
 from app.config import get_settings
 from app.providers.embeddings import get_embedding_provider
 from app.providers.llm import ChatMessage, get_llm_provider
+from app.retrieval.intent import RetrievalIntent, parse_intent
+from app.retrieval.lexical import lexical_search
+from app.retrieval.query_builder import build_retrieval_queries
 from app.retrieval.ranking import (
     DEFAULT_WEIGHTS,
-    MIN_EVIDENCE_SCORE,
     RANKING_FORMULA,
-    RELATIVE_FLOOR,
+    apply_diversity,
+    gate_chunks,
     rank_chunks,
-    select_evidence,
 )
 from app.retrieval.temporal import TimePeriod
 from app.retrieval.vector import vector_search
@@ -29,12 +34,14 @@ from app.retrieval.vector import vector_search
 
 @dataclass
 class RetrievalResult:
-    retrieval_query: str
-    period: TimePeriod
+    intent: RetrievalIntent
+    queries: list[str]
     query_embedding: list[float]
+    vector_count: int
+    lexical_count: int
     candidate_count: int
+    ranked_all: list[dict] = field(default_factory=list)
     ranked: list[dict] = field(default_factory=list)       # accepted evidence
-    ranked_all: list[dict] = field(default_factory=list)   # all candidates + accept state
     top_n: int = 0
     weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     formula: str = RANKING_FORMULA
@@ -42,6 +49,8 @@ class RetrievalResult:
 
 def make_retrieval_query(question: str) -> str:
     """Use DeepSeek to turn a question into a focused semantic query."""
+    from app.agent.prompts import build_retrieval_query
+
     llm = get_llm_provider()
     response = llm.chat(
         [ChatMessage(role="user", content=build_retrieval_query(question))],
@@ -52,9 +61,11 @@ def make_retrieval_query(question: str) -> str:
 
 
 def retrieve(
-    retrieval_query: str,
-    period: TimePeriod,
     *,
+    question: str,
+    semantic_query: str,
+    sql_results: list[dict],
+    period: TimePeriod,
     candidate_k: int | None = None,
     top_n: int | None = None,
 ) -> RetrievalResult:
@@ -62,39 +73,78 @@ def retrieve(
     candidate_k = candidate_k or settings.retrieval_top_k
     top_n = top_n or settings.rerank_top_n
 
+    intent = parse_intent(question, sql_results)
+    queries = build_retrieval_queries(semantic_query, intent)
+
     embedder = get_embedding_provider()
-    query_vector = embedder.embed_query(retrieval_query)
+    primary_embedding = embedder.embed_query(queries[0] if queries else semantic_query)
 
-    candidates = vector_search(
-        retrieval_query,
-        period=period,
-        top_k=candidate_k,
-        query_vector=query_vector,
-    )
-    ranked_all = rank_chunks(candidates, period=period, top_n=None)
-    accepted, _ = select_evidence(ranked_all, top_n)
+    # Stage 1A: vector candidates.
+    vector: dict[int, dict] = {}
+    for q in queries:
+        qvec = embedder.embed_query(q)
+        for c in vector_search(
+            q,
+            period=period,
+            top_k=candidate_k,
+            query_vector=qvec,
+            energy_type=intent.energy_type,
+            geography=intent.geography,
+        ):
+            c["from_vector"] = True
+            vector.setdefault(c["id"], c)
 
-    accepted_ids = {c["id"] for c in accepted}
-    best = ranked_all[0]["final_score"] if ranked_all else 0.0
-    for c in ranked_all:
-        if c["id"] in accepted_ids:
-            c["accepted"] = True
-            c["rejection_reason"] = None
+    # Stage 1B: lexical candidates.
+    lexical: dict[int, dict] = {}
+    for q in queries:
+        for c in lexical_search(
+            q,
+            period=period,
+            top_k=candidate_k,
+            energy_type=intent.energy_type,
+            geography=intent.geography,
+        ):
+            c["from_lexical"] = True
+            c.setdefault("similarity", 0.0)
+            lexical.setdefault(c["id"], c)
+
+    # Merge (dedupe by chunk id).
+    merged: dict[int, dict] = {}
+    for cid, c in vector.items():
+        merged[cid] = c
+    for cid, c in lexical.items():
+        if cid in merged:
+            merged[cid]["from_lexical"] = True
         else:
-            c["accepted"] = False
-            if c["final_score"] < MIN_EVIDENCE_SCORE:
-                c["rejection_reason"] = "below evidence threshold"
-            elif c["final_score"] < best * RELATIVE_FLOOR:
-                c["rejection_reason"] = "below relative floor"
-            else:
-                c["rejection_reason"] = "document cap (diversity)"
+            merged[cid] = c
+
+    candidates = list(merged.values())
+    query_text = " ".join(queries)
+
+    # Stage 2: rerank (composite score).
+    ranked_all = rank_chunks(candidates, intent=intent, query_text=query_text)
+
+    # Stage 3: evidence gate.
+    passed, rejected = gate_chunks(ranked_all, intent=intent)
+
+    accepted = apply_diversity(passed, top_n)
+    accepted_ids = {c["id"] for c in accepted}
+    for c in passed:
+        c["accepted"] = c["id"] in accepted_ids
+    for c in rejected:
+        c["accepted"] = False
+
+    combined = passed + rejected
+    combined.sort(key=lambda r: r["final_score"], reverse=True)
 
     return RetrievalResult(
-        retrieval_query=retrieval_query,
-        period=period,
-        query_embedding=query_vector,
+        intent=intent,
+        queries=queries,
+        query_embedding=primary_embedding,
+        vector_count=len(vector),
+        lexical_count=len(lexical),
         candidate_count=len(candidates),
+        ranked_all=combined,
         ranked=accepted,
-        ranked_all=ranked_all,
         top_n=top_n,
     )

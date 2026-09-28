@@ -29,6 +29,7 @@ from app.ingestion.pipeline import ingest_price_points, store_raw_document, stor
 from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
 from app.retrieval.changes import largest_changes
+from app.retrieval.intent import parse_intent
 from app.retrieval.service import make_retrieval_query, retrieve
 from app.retrieval.sql import default_series_id
 from app.retrieval.temporal import TimePeriod, parse_time_period
@@ -45,6 +46,7 @@ from app.schemas.api import (
     RetrieveRequest,
     RetrieveResponse,
 )
+from app.synthesis.causal import filter_causally_useful
 from app.synthesis.citations import build_citations
 from app.synthesis.grounding import validate_grounding
 from app.synthesis.synthesizer import Synthesizer
@@ -134,7 +136,6 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
     chunks = []
     for rank, c in enumerate(t.get("chunks", [])):
         meta = c.get("temporal_meta") or {}
-        accepted = bool(c.get("accepted"))
         chunks.append(
             ChunkTrace(
                 rank=rank,
@@ -148,27 +149,43 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
                 published_date=c.get("published_date"),
                 start_year=c.get("start_year"),
                 end_year=c.get("end_year"),
+                event_start_date=c.get("event_start_date"),
+                event_end_date=c.get("event_end_date"),
+                energy_type=c.get("energy_type"),
+                market_layer=c.get("market_layer"),
+                geography=c.get("geography"),
+                sector=c.get("sector"),
                 semantic_similarity=c.get("semantic_similarity", 0.0),
+                lexical_score=c.get("lexical_score", 0.0),
                 temporal_score=c.get("temporal_score", 0.0),
                 temporal_reason=c.get("temporal_reason"),
                 temporal_coverage=meta.get("coverage"),
                 temporal_specificity=meta.get("specificity"),
                 chunk_span=meta.get("chunk_span"),
+                domain_score=c.get("domain_score", 0.0),
+                metric_score=c.get("metric_score", 0.0),
+                geography_score=c.get("geography_score", 0.0),
                 authority_score=c.get("authority_score", 0.0),
                 final_score=c.get("final_score", 0.0),
-                accepted=accepted,
-                rejection_reason=c.get("rejection_reason"),
-                passed_to_llm=accepted,
+                gate=c.get("gate"),
+                failure_reason=c.get("failure_reason"),
+                from_vector=bool(c.get("from_vector")),
+                from_lexical=bool(c.get("from_lexical")),
+                accepted=bool(c.get("accepted")),
+                passed_to_llm=bool(c.get("accepted")),
                 text=c.get("text", ""),
             )
         )
     return RAGTrace(
         question=question,
+        intent=t.get("intent", {}),
         requested_period=t.get("requested_period", {}),
-        retrieval_query=t.get("retrieval_query"),
+        queries=t.get("queries", []),
         embedding_model=settings.embedding_model,
         embedding_dim=int(t.get("embedding_dim") or 0),
         query_embedding=[float(x) for x in t.get("query_embedding", [])],
+        vector_count=int(t.get("vector_count") or 0),
+        lexical_count=int(t.get("lexical_count") or 0),
         candidate_count=int(t.get("candidate_count") or 0),
         accepted_count=int(t.get("accepted_count") or 0),
         top_n=top_n,
@@ -187,16 +204,27 @@ def ask(req: AskRequest) -> AskResponse:
 
     agent_result = AgentOrchestrator().run(question)
     _supplement_largest_change(question, agent_result.sql_results)
-    answer = Synthesizer().synthesize(question, agent_result.sql_results, agent_result.evidence)
-    grounding = validate_grounding(answer, agent_result.sql_results, agent_result.evidence)
-    citations = build_citations(agent_result.evidence)
+
+    # Causal-usefulness refinement for "why" questions.
+    intent = parse_intent(question, agent_result.sql_results)
+    evidence = agent_result.evidence
+    if intent.is_causal:
+        evidence = filter_causally_useful(question, evidence)
+
+    answer = Synthesizer().synthesize(question, agent_result.sql_results, evidence)
+    grounding = validate_grounding(answer, agent_result.sql_results, evidence)
+    citations = build_citations(evidence)
 
     trace = _build_trace(question, agent_result, settings) if req.include_trace else None
+    if trace is not None:
+        final_ids = {c["id"] for c in evidence}
+        for c in trace.chunks:
+            c.passed_to_llm = c.chunk_id in final_ids
     return AskResponse(
         answer=answer,
         citations=citations,
         sql_results=agent_result.sql_results,
-        retrieved_chunks=len(agent_result.evidence),
+        retrieved_chunks=len(evidence),
         grounding=grounding,
         trace=trace,
     )
@@ -210,30 +238,48 @@ def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
     else:
         period = parse_time_period(req.query)
 
-    query = make_retrieval_query(req.query) if req.generate_query else req.query
+    semantic_query = make_retrieval_query(req.query) if req.generate_query else req.query
     result = retrieve(
-        query, period, candidate_k=req.candidate_k, top_n=req.top_n
+        question=req.query,
+        semantic_query=semantic_query,
+        sql_results=[],
+        period=period,
+        candidate_k=req.candidate_k,
+        top_n=req.top_n,
     )
 
     class _Agent:
-        retrieval_trace = {
-            "retrieval_query": result.retrieval_query,
-            "requested_period": {
-                "start": result.period.start.isoformat() if result.period.start else None,
-                "end": result.period.end.isoformat() if result.period.end else None,
-            },
-            "query_embedding": result.query_embedding,
-            "embedding_dim": len(result.query_embedding),
-            "candidate_count": result.candidate_count,
-            "accepted_count": len(result.ranked),
-            "top_n": result.top_n,
-            "weights": result.weights,
-            "formula": result.formula,
-            "chunks": result.ranked_all,
-        }
+        pass
 
-    trace = _build_trace(req.query, _Agent(), settings)
-    trace.generated_retrieval_query = query if req.generate_query else None
+    agent = _Agent()
+    agent.retrieval_trace = {
+        "intent": {
+            "energy_type": result.intent.energy_type,
+            "market_layer": result.intent.market_layer,
+            "geography": result.intent.geography,
+            "sector": result.intent.sector,
+            "event_start": result.intent.event_start.isoformat() if result.intent.event_start else None,
+            "event_end": result.intent.event_end.isoformat() if result.intent.event_end else None,
+            "is_causal": result.intent.is_causal,
+        },
+        "requested_period": {
+            "start": period.start.isoformat() if period.start else None,
+            "end": period.end.isoformat() if period.end else None,
+        },
+        "queries": result.queries,
+        "query_embedding": result.query_embedding,
+        "embedding_dim": len(result.query_embedding),
+        "vector_count": result.vector_count,
+        "lexical_count": result.lexical_count,
+        "candidate_count": result.candidate_count,
+        "accepted_count": len(result.ranked),
+        "top_n": result.top_n,
+        "weights": result.weights,
+        "formula": result.formula,
+        "chunks": result.ranked_all,
+    }
+
+    trace = _build_trace(req.query, agent, settings)
     return RetrieveResponse(trace=trace)
 
 
@@ -377,6 +423,48 @@ def admin_ingest_wikipedia(title: str, force: bool = False) -> IngestSourceRespo
 def admin_reset_rag() -> ResetResponse:
     reset_rag_tables()
     return ResetResponse(dropped=["chunks", "documents"], recreated=["documents", "chunks"])
+
+
+@app.get("/admin/coverage")
+def admin_coverage() -> dict:
+    """Yearly + energy-domain coverage for the audit script."""
+    with session_scope() as session:
+        year_rows = session.execute(
+            select(Chunk.start_year, Chunk.energy_type, Chunk.source_name,
+                   Chunk.market_layer, func.count())
+            .group_by(Chunk.start_year, Chunk.energy_type, Chunk.source_name, Chunk.market_layer)
+        ).all()
+        years: dict[int, dict] = {}
+        for y, et, src, ml, cnt in year_rows:
+            if y is None:
+                continue
+            d = years.setdefault(y, {"chunks": 0, "eia": 0, "wiki": 0, "electricity": 0, "natural_gas": 0, "retail_price": 0})
+            d["chunks"] += cnt
+            if src == "U.S. Energy Information Administration":
+                d["eia"] += cnt
+            elif src == "Wikipedia":
+                d["wiki"] += cnt
+            if et == "electricity":
+                d["electricity"] += cnt
+            if et == "natural_gas":
+                d["natural_gas"] += cnt
+            if ml == "retail_price":
+                d["retail_price"] += cnt
+        energy_types = dict(session.execute(
+            select(Chunk.energy_type, func.count()).group_by(Chunk.energy_type)
+        ).all())
+        market_layers = dict(session.execute(
+            select(Chunk.market_layer, func.count()).group_by(Chunk.market_layer)
+        ).all())
+        n_docs = session.scalar(select(func.count()).select_from(Document)) or 0
+        n_chunks = session.scalar(select(func.count()).select_from(Chunk)) or 0
+    return {
+        "documents": n_docs,
+        "chunks": n_chunks,
+        "years": {str(y): v for y, v in sorted(years.items())},
+        "energy_types": energy_types,
+        "market_layers": market_layers,
+    }
 
 
 @app.get("/admin/stats")

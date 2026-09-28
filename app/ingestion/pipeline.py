@@ -14,8 +14,13 @@ from sqlalchemy import select
 from app.db.base import session_scope
 from app.db.models import Chunk, Document, PriceRecord
 from app.ingestion.chunker import chunk_segments
+from app.ingestion.domain import classify_domain
 from app.ingestion.html import Segment, text_to_segments
-from app.ingestion.metadata import infer_year_range
+from app.ingestion.metadata import (
+    extract_event_window,
+    extract_mentioned_years,
+    infer_year_range,
+)
 from app.ingestion.sources.base import SourceDocument
 from app.providers.embeddings import get_embedding_provider
 
@@ -41,6 +46,12 @@ def store_source_document(
         start_year, end_year = infer_year_range(
             doc.full_text, published_date=doc.published_date
         )
+
+    event_start, event_end = extract_event_window(
+        doc.full_text, title=doc.title, published_date=doc.published_date
+    )
+    domain = classify_domain(doc.title + ". " + doc.full_text)
+    mentioned_years = extract_mentioned_years(doc.full_text)
 
     embedder = get_embedding_provider()
     embeddings = embedder.embed_documents([c.text for c in chunks])
@@ -79,6 +90,13 @@ def store_source_document(
                     published_date=doc.published_date,
                     start_year=start_year,
                     end_year=end_year,
+                    event_start_date=event_start,
+                    event_end_date=event_end,
+                    mentioned_years=mentioned_years,
+                    energy_type=domain.energy_type,
+                    market_layer=domain.market_layer,
+                    geography=domain.geography,
+                    sector=domain.sector,
                     text=chunk.text,
                     embedding=vector,
                 )
