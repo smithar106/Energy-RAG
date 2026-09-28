@@ -27,8 +27,14 @@ _CITE_RE = re.compile(r"\[\d+\]")
 _DATE_RE = re.compile(r"\b\d{4}-\d{2}(-\d{2})?\b")
 _PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _CAUSAL_RE = re.compile(
-    r"\b(because|due to|caused|led to|as a result|driven by|owing to|"
-    r"resulted in|pushed up|contributed to)\b",
+    r"\b(because|due to|as a result of|driven by|owing to|attributed to|"
+    r"caused by|resulted in|pushed up|contributed to|led to)\b",
+    re.I,
+)
+_REFUSAL_RE = re.compile(
+    r"\b(insufficient|no sufficient evidence|no evidence|could not|cannot|"
+    r"unable to|no causal|not supported|without .{0,20}evidence|"
+    r"cannot be supported)\b",
     re.I,
 )
 _PCT_TOL = 0.06
@@ -173,7 +179,7 @@ def validate_grounding(
     check.sufficient_evidence = len(evidence) > 0
     if not check.sufficient_evidence:
         check.notes.append("no evidence chunks were retrieved")
-        if _CAUSAL_RE.search(answer or ""):
+        if _CAUSAL_RE.search(answer or "") and not _REFUSAL_RE.search(answer or ""):
             check.ungrounded.append("explanatory claim without retrieved evidence")
 
     if llm_check and evidence:

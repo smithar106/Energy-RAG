@@ -93,3 +93,25 @@ def test_diversity_caps_chunks_per_document():
     docs = [c["document_id"] for c in accepted]
     assert 2 in docs
     assert docs.count(1) <= 3
+
+
+def test_gate_rejects_broad_window_without_target_year():
+    intent = _intent()
+    # Broad 2007-2020 window that never mentions 2017.
+    c = _chunk(9, sy=2007, ey=2020, es=date(2007, 1, 1), ee=date(2020, 12, 31))
+    c["mentioned_years"] = [2012, 2014]
+    c["energy_type"] = "natural_gas"
+    ranked = rank_chunks([c], intent=intent, query_text="electricity 2017")
+    passed, rejected = gate_chunks(ranked, intent=intent)
+    assert passed == []
+    assert any("too broad" in r["failure_reason"] for r in rejected)
+
+
+def test_gate_accepts_broad_window_that_mentions_target_year():
+    intent = _intent()
+    c = _chunk(8, sy=2007, ey=2020, es=date(2007, 1, 1), ee=date(2020, 12, 31))
+    c["mentioned_years"] = [2012, 2017]
+    c["energy_type"] = "natural_gas"
+    ranked = rank_chunks([c], intent=intent, query_text="electricity 2017 natural gas")
+    passed, rejected = gate_chunks(ranked, intent=intent)
+    assert len(passed) == 1

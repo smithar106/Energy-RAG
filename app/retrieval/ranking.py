@@ -251,6 +251,12 @@ def gate_chunks(
                 relevant = context_start <= pub <= context_end
             if not relevant:
                 reasons.append("no temporal relevance to event")
+            elif es and ee and (ee.year - es.year + 1) > 6:
+                # A very broad window must actually mention the target year.
+                target_years = set(range(context_start.year, context_end.year + 1))
+                mentioned = {int(y) for y in (c.get("mentioned_years") or [])}
+                if not (mentioned & target_years):
+                    reasons.append("event window too broad and never mentions the target year")
 
         if reasons:
             c = dict(c)

@@ -66,3 +66,16 @@ def test_ungrounded_number_flagged():
     check = validate_grounding(answer, sql, [], llm_check=False)
     assert check.valid is False
     assert any("99.9" in u for u in check.ungrounded)
+
+
+def test_refusal_answer_is_not_flagged():
+    sql = _sql_2017()
+    answer = (
+        "The largest increase was May 2017 (10.34) to June 2017 (10.83): +0.49, +4.74%. "
+        "I could not find sufficient historical evidence to explain what caused this increase."
+    )
+    check = validate_grounding(answer, sql, [], llm_check=False)
+    assert check.sufficient_evidence is False
+    # A refusal must not be flagged as an ungrounded explanatory claim.
+    assert not any(u.startswith("explanatory") for u in check.ungrounded)
+    assert check.valid is True
