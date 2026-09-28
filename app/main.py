@@ -243,12 +243,16 @@ def admin_ingest_eia(
     items = eia_articles.list_recent_articles(limit=offset + limit)[offset : offset + limit]
     results: list[IngestSourceResponse] = []
     for item in items:
-        doc = eia_articles.fetch_article(
-            item.url, title=item.title, published_date=item.published_date
-        )
-        if doc is None:
+        try:
+            doc = eia_articles.fetch_article(
+                item.url, title=item.title, published_date=item.published_date
+            )
+            if doc is None:
+                continue
+            doc_id, n = store_source_document(doc, force=force)
+        except Exception as exc:  # noqa: BLE001
+            print(f"skip {item.url}: {exc}")
             continue
-        doc_id, n = store_source_document(doc, force=force)
         results.append(
             IngestSourceResponse(
                 title=doc.title,
@@ -269,12 +273,16 @@ def admin_ingest_eia_archive(
     items = eia_articles.list_archive_articles()[offset : offset + limit]
     results: list[IngestSourceResponse] = []
     for item in items:
-        doc = eia_articles.fetch_article(
-            item.url, title=item.title, published_date=item.published_date
-        )
-        if doc is None:
+        try:
+            doc = eia_articles.fetch_article(
+                item.url, title=item.title, published_date=item.published_date
+            )
+            if doc is None:
+                continue
+            doc_id, n = store_source_document(doc, force=force)
+        except Exception as exc:  # noqa: BLE001 — skip a bad article, keep going
+            print(f"skip {item.url}: {exc}")
             continue
-        doc_id, n = store_source_document(doc, force=force)
         results.append(
             IngestSourceResponse(
                 title=doc.title,
