@@ -102,10 +102,10 @@ def largest_changes(
     current_clause = ""
     if period.start:
         params["t_start"] = period.start
-        current_clause += " AND current_period >= :t_start"
+        current_clause += " AND period >= :t_start"
     if period.end:
         params["t_end"] = period.end
-        current_clause += " AND current_period <= :t_end"
+        current_clause += " AND period <= :t_end"
     lookback = ""
     if period.end:
         lookback = "WHERE series_id = :sid AND period <= :t_end"
