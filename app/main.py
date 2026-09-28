@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import re
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -27,7 +28,9 @@ from app.ingestion.eia import EIAClient
 from app.ingestion.pipeline import ingest_price_points, store_raw_document, store_source_document
 from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
+from app.retrieval.changes import largest_changes
 from app.retrieval.service import make_retrieval_query, retrieve
+from app.retrieval.sql import default_series_id
 from app.retrieval.temporal import TimePeriod, parse_time_period
 from app.schemas.api import (
     AskRequest,
@@ -85,6 +88,44 @@ def health() -> dict:
 
 
 # ── Ask ────────────────────────────────────────────────────────────────────
+_CHANGE_HINT_RE = re.compile(
+    r"\b(biggest|largest|most|greatest|steepest|highest|maximum)\b", re.I
+)
+_DECREASE_RE = re.compile(r"\b(decrease|drop|fall|decline|loss|lowest|minimum)\b", re.I)
+
+
+def _supplement_largest_change(question: str, sql_results: list[dict]) -> None:
+    """Deterministically compute the largest change when the question asks for it.
+
+    Guarantees the LAG()-based observation pair is present even if the model
+    forgot to call ``find_largest_change``, so the answer is grounded in SQL.
+    """
+    if not _CHANGE_HINT_RE.search(question):
+        return
+    for res in sql_results:
+        if "changes" in res:
+            return  # already computed by the agent
+
+    direction = "decrease" if _DECREASE_RE.search(question) else "increase"
+    period = parse_time_period(question)
+    series_id = default_series_id()
+    if not series_id or not period.is_bounded:
+        return
+
+    for metric in ("percent", "absolute"):
+        changes = largest_changes(series_id, period, metric=metric, direction=direction)
+        if changes:
+            sql_results.append(
+                {
+                    "series_id": series_id,
+                    "metric": metric,
+                    "direction": direction,
+                    "interpretation": f"largest month-over-month {metric} {direction}",
+                    "changes": [c.to_dict() for c in changes],
+                }
+            )
+
+
 def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
     t = agent_result.retrieval_trace
     if not t:
@@ -145,6 +186,7 @@ def ask(req: AskRequest) -> AskResponse:
     settings = get_settings()
 
     agent_result = AgentOrchestrator().run(question)
+    _supplement_largest_change(question, agent_result.sql_results)
     answer = Synthesizer().synthesize(question, agent_result.sql_results, agent_result.evidence)
     grounding = validate_grounding(answer, agent_result.sql_results, agent_result.evidence)
     citations = build_citations(agent_result.evidence)
