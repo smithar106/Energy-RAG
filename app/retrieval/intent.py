@@ -18,7 +18,6 @@ _CAUSAL_RE = re.compile(
     re.I,
 )
 
-
 @dataclass
 class RetrievalIntent:
     energy_type: str | None
@@ -111,12 +110,45 @@ def parse_intent(question: str, sql_results: list[dict]) -> RetrievalIntent:
         period = parse_time_period(question)
         event_start, event_end = period.start, period.end
 
+    # Fall back to the question text when SQL hasn't yet provided the series
+    # (the agent may call evidence_search before structured lookup).
+    q_domain = _question_domain(question)
+    energy_type = meta.energy_type or q_domain.energy_type
+    market_layer = _metric_to_layer(meta.metric) or q_domain.market_layer
+    geography = meta.geography or q_domain.geography
+    sector = _sector_label(meta.sector) or q_domain.sector
+
     return RetrievalIntent(
-        energy_type=meta.energy_type,
-        market_layer=_metric_to_layer(meta.metric),
-        geography=meta.geography,
-        sector=_sector_label(meta.sector),
+        energy_type=energy_type,
+        market_layer=market_layer,
+        geography=geography,
+        sector=sector,
         event_start=event_start,
         event_end=event_end,
         is_causal=bool(_CAUSAL_RE.search(question or "")),
     )
+
+
+def _question_domain(question: str):
+    from app.ingestion.domain import classify_domain
+
+    q = (question or "").lower()
+    domain = classify_domain(question)
+    market_layer = None
+    if "retail" in q:
+        market_layer = "retail_price"
+    elif "wholesale" in q:
+        market_layer = "wholesale_price"
+    sector = None
+    if "residential" in q:
+        sector = "residential"
+    elif "commercial" in q:
+        sector = "commercial"
+    elif "industrial" in q:
+        sector = "industrial"
+    return type("QDomain", (), {
+        "energy_type": domain.energy_type,
+        "market_layer": market_layer or domain.market_layer,
+        "geography": domain.geography,
+        "sector": sector or domain.sector,
+    })()
