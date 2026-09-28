@@ -8,12 +8,11 @@
   :root{
     --bg:#f7f6f3; --panel:#ffffff; --ink:#191917; --muted:#6b6a66;
     --line:#e3e1db; --line-strong:#cfccc4; --accent:#0f6b3b; --accent-soft:#e8f1ec;
-    --warn:#8a5a00; --warn-soft:#fbf3e2; --bad:#a12a1f; --bad-soft:#fbeceb;
+    --bad:#a12a1f; --bad-soft:#fbeceb; --warn:#8a5a00; --warn-soft:#fbf3e2;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
-  *{box-sizing:border-box}
-  html,body{margin:0}
+  *{box-sizing:border-box} html,body{margin:0}
   body{background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans)}
   .wrap{max-width:940px;margin:0 auto;padding:28px 20px 80px}
   header.top{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:22px}
@@ -22,34 +21,43 @@
   header.top .spacer{flex:1}
   header.top a{color:var(--muted);font-size:12.5px;text-decoration:none;font-family:var(--mono)}
   header.top a:hover{color:var(--accent)}
-
   .ask{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   .ask label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
   textarea{width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:11px 12px;font:15px/1.5 var(--sans);resize:vertical;min-height:66px;background:#fff;color:var(--ink)}
   textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
-  .row{display:flex;align-items:center;gap:12px;margin-top:12px}
+  .row{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
   button{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:9px 18px;font:600 14px var(--sans);cursor:pointer}
-  button:hover{filter:brightness(1.07)}
-  button:disabled{opacity:.55;cursor:default}
+  button:hover{filter:brightness(1.07)} button:disabled{opacity:.55;cursor:default}
   .hint{color:var(--muted);font-size:12.5px}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
   .chip{border:1px solid var(--line-strong);background:#fff;border-radius:20px;padding:5px 11px;font-size:12.5px;color:#3a3a37;cursor:pointer}
   .chip:hover{border-color:var(--accent);color:var(--accent)}
-
   .status{margin-top:18px;color:var(--muted);font-size:13px;font-family:var(--mono);display:none}
   .status.on{display:block}
   .status .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:7px;animation:p 1.1s infinite}
   @keyframes p{50%{opacity:.25}}
   .err{background:var(--bad-soft);border:1px solid #eeccc8;color:var(--bad);border-radius:8px;padding:11px 13px;margin-top:16px;font-size:13.5px;display:none}
   .err.on{display:block}
-
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-top:18px}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
+
+  /* biggest-change highlight */
+  .change{display:flex;align-items:stretch;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .change .side{flex:1;padding:16px 18px}
+  .change .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 14px;color:var(--muted)}
+  .change .mid .arw{font-size:22px;line-height:1}
+  .change .mid .delta{font-family:var(--mono);font-size:13px;color:var(--ink);white-space:nowrap}
+  .change .per{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .change .val{font-family:var(--mono);font-size:26px;margin-top:2px}
+  .change .unit{font-size:12px;color:var(--muted)}
+  .change .pct{background:var(--accent-soft);border:1px solid #cbe3d6;color:var(--accent);font-family:var(--mono);font-size:22px;font-weight:600;padding:6px 14px;border-radius:8px;text-align:center}
+  .change .pctlabel{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
+  .change .right{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px 20px;border-left:1px solid var(--line);gap:4px}
+  .change-cap{font-size:11.5px;color:var(--muted);margin-top:9px}
+
   .answer{font-size:15.5px;line-height:1.62}
   .answer h4{font-size:14px;margin:16px 0 6px}
-  .answer p{margin:0 0 10px}
-  .answer ul{margin:0 0 10px;padding-left:20px}
-  .answer li{margin:3px 0}
+  .answer p{margin:0 0 10px} .answer ul{margin:0 0 10px;padding-left:20px} .answer li{margin:3px 0}
   .answer code{background:#f1efea;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font:12.5px var(--mono)}
   sup.cite a{font-family:var(--mono);font-size:10.5px;text-decoration:none;color:#fff;background:var(--accent);border-radius:4px;padding:1px 4px;margin-left:2px;vertical-align:super}
   sup.cite a:hover{filter:brightness(1.1)}
@@ -65,46 +73,40 @@
   .source .ex{color:#4a4945;font-size:13px;margin-top:6px}
   .source .meta{color:var(--muted);font-size:11.5px;font-family:var(--mono);margin-top:5px}
 
-  .stats{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:4px}
-  .stat{border:1px solid var(--line);border-radius:7px;padding:8px 11px;min-width:104px;background:#fcfbf9}
-  .stat .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-  .stat .v{font-family:var(--mono);font-size:15px;margin-top:2px}
-
-  details.insp{border:1px solid var(--line);border-radius:9px;margin-top:18px;background:var(--panel)}
+  details.insp{border:1px solid var(--line);border-radius:9px;margin-top:14px;background:var(--panel)}
   details.insp>summary{cursor:pointer;padding:13px 17px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);list-style:none}
   details.insp>summary::-webkit-details-marker{display:none}
-  details.insp>summary::before{content:"▸ "}
-  details.insp[open]>summary::before{content:"▾ "}
+  details.insp>summary::before{content:"▸ "} details.insp[open]>summary::before{content:"▾ "}
   details.insp .body{padding:2px 17px 18px;border-top:1px solid var(--line)}
-  .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 14px;font-size:12.5px;margin:12px 0}
-  .kv .k{color:var(--muted)}
-  .kv .v{font-family:var(--mono);word-break:break-word}
+  .kv{display:grid;grid-template-columns:160px 1fr;gap:4px 14px;font-size:12.5px;margin:12px 0}
+  .kv .k{color:var(--muted)} .kv .v{font-family:var(--mono);word-break:break-word}
   .chunk{border:1px solid var(--line);border-radius:7px;padding:10px 12px;margin:9px 0;background:#fcfbf9}
+  .chunk.rej{opacity:.62}
   .chunk .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
   .chunk .rank{font-family:var(--mono);font-size:12px;color:var(--muted)}
-  .chunk .pass{font-family:var(--mono);font-size:10.5px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:1px 5px}
-  .chunk .pass.no{color:var(--muted);border-color:var(--line-strong)}
+  .chunk .pass{font-family:var(--mono);font-size:10.5px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:1px 5px;white-space:nowrap}
+  .chunk .pass.no{color:var(--bad);border-color:#eeccc8;background:var(--bad-soft)}
   .bars{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0}
   .bar .l{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between}
   .bar .l b{font-family:var(--mono);font-weight:500;color:var(--ink)}
   .bar .track{height:5px;background:#eceae4;border-radius:3px;margin-top:3px;overflow:hidden}
   .bar .fill{height:100%;background:var(--accent)}
+  .chunk.rej .bar .fill{background:#b9b6ad}
   .chunk .src{font-size:12.5px;margin:2px 0}
   .chunk .src a{color:var(--accent);font-family:var(--mono);font-size:11.5px;text-decoration:none;word-break:break-all}
-  .chunk .txt{font-size:12.5px;color:#40403c;margin-top:6px;max-height:88px;overflow:hidden;position:relative}
-  .chunk .txt::after{content:"";position:absolute;inset:auto 0 0 0;height:26px;background:linear-gradient(transparent,#fcfbf9)}
-  .chunk .txt.open{max-height:none}
-  .chunk .txt.open::after{display:none}
+  .chunk .txt{font-size:12.5px;color:#40403c;margin-top:6px;max-height:84px;overflow:hidden;position:relative}
+  .chunk .txt::after{content:"";position:absolute;inset:auto 0 0 0;height:24px;background:linear-gradient(transparent,#fcfbf9)}
+  .chunk .txt.open{max-height:none} .chunk .txt.open::after{display:none}
   .chunk .more{font-size:11.5px;color:var(--accent);cursor:pointer;margin-top:4px;display:inline-block}
   table.sql{width:100%;border-collapse:collapse;font-size:12.5px;font-family:var(--mono);margin-top:6px}
   table.sql th,table.sql td{border:1px solid var(--line);padding:5px 8px;text-align:left}
   table.sql th{color:var(--muted);font-weight:500;background:#faf9f6}
+  .scroll{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:7px}
   .badge{display:inline-block;font-family:var(--mono);font-size:11px;border-radius:4px;padding:2px 7px}
   .badge.ok{background:var(--accent-soft);color:var(--accent);border:1px solid #cbe3d6}
   .badge.no{background:var(--bad-soft);color:var(--bad);border:1px solid #eeccc8}
   .muted{color:var(--muted)}
   footer.foot{color:var(--muted);font-size:12px;margin-top:30px;border-top:1px solid var(--line);padding-top:14px;line-height:1.7}
-  footer.foot code{font-family:var(--mono);font-size:11.5px}
 </style>
 </head>
 <body>
@@ -113,41 +115,38 @@
     <h1>Energy-RAG</h1>
     <span class="tag">historical energy price questions</span>
     <span class="spacer"></span>
-    <a href="/docs">API</a>
-    <a href="/admin/stats">KB</a>
+    <a href="/docs">API</a><a href="/admin/stats">KB</a>
   </header>
 
   <section class="ask">
     <label for="q">Ask a question</label>
-    <textarea id="q" placeholder="e.g. Why did U.S. electricity prices rise between 2021 and 2023?"></textarea>
+    <textarea id="q" placeholder="e.g. What caused the biggest increase in US electricity prices in 2017 and what was the % increase?"></textarea>
     <div class="row">
       <button id="ask">Ask</button>
-      <span class="hint">Numbers come from verified EIA data (SQL); explanations come from cited sources.</span>
+      <span class="hint">Numbers from verified EIA data (SQL); explanations from cited sources.</span>
     </div>
     <div class="chips" id="chips"></div>
   </section>
 
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Retrieving…</span></div>
   <div class="err" id="err"></div>
-
   <div id="out"></div>
 
   <footer class="foot">
-    Answers combine <strong>structured SQL</strong> retrieval (verified price numbers) with
-    <strong>hybrid RAG</strong> retrieval over real sources (semantic similarity + temporal overlap + source authority,
-    EIA &gt; Wikipedia). Citations link to the stored source URLs. Nothing is generated without grounding.
+    Answers combine <strong>structured SQL</strong> (verified numbers, explicit observation pairs) with
+    <strong>hybrid RAG</strong> over real sources (semantic similarity + temporal specificity + source authority,
+    EIA &gt; Wikipedia) with document diversity. Citations link to stored source URLs.
   </footer>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
 const EXAMPLES = [
+  "What caused the biggest increase in US electricity prices in 2017 and what was the % increase?",
   "Why did U.S. electricity prices rise between 2021 and 2023?",
   "Why did energy prices decline around 2015?",
-  "What factors affected energy prices during COVID-19?",
-  "What happened to U.S. natural gas prices in 2025 and 2026?"
+  "What factors affected energy prices during COVID-19?"
 ];
 
 function inlineMd(s){
@@ -172,19 +171,58 @@ function mdToHtml(md){
   close();
   return html;
 }
-
 const bar = (label, v) => {
   const pct = Math.max(0, Math.min(1, Number(v)||0)) * 100;
   return `<div class="bar"><div class="l"><span>${label}</span><b>${(Number(v)||0).toFixed(3)}</b></div>
     <div class="track"><div class="fill" style="width:${pct}%"></div></div></div>`;
 };
 
-function renderSources(citations){
-  if(!citations.length) return "";
-  return `<section class="card"><h2>Sources</h2><div class="sources">` + citations.map(s => `
+function collectChanges(sqlResults){
+  const out = [];
+  for(const r of (sqlResults||[])){
+    if(r.price_change) out.push(r.price_change);
+    for(const c of (r.changes||[])) out.push(c);
+  }
+  return out;
+}
+function fmtPct(v){ return v==null ? "—" : (v>0?"+":"") + v.toFixed(2) + "%"; }
+function fmtAbs(v){ return v==null ? "—" : (v>0?"+":"") + v.toFixed(2); }
+function ym(p){ return (p||"").slice(0,7); }
+
+function renderChange(sqlResults){
+  const changes = collectChanges(sqlResults).filter(c => c.percent_change != null);
+  if(!changes.length) return "";
+  changes.sort((a,b) => Math.abs(b.percent_change) - Math.abs(a.percent_change));
+  const c = changes[0];
+  return `<section class="card"><h2>Biggest monthly change — ${esc(c.metric || "price")}</h2>
+    <div class="change">
+      <div class="side">
+        <div class="per">${esc(ym(c.previous_period))}</div>
+        <div class="val">${c.previous_value}</div>
+        <div class="unit">${esc(c.unit || "")}</div>
+      </div>
+      <div class="mid"><div class="arw">→</div><div class="delta">${fmtAbs(c.absolute_change)} ${esc(c.unit||"")}</div></div>
+      <div class="side">
+        <div class="per">${esc(ym(c.current_period))}</div>
+        <div class="val">${c.current_value}</div>
+        <div class="unit">${esc(c.unit || "")}</div>
+      </div>
+      <div class="right">
+        <div class="pct">${fmtPct(c.percent_change)}</div>
+        <div class="pctlabel">percent change</div>
+      </div>
+    </div>
+    <div class="change-cap">${esc(c.energy_type||"")} · ${esc(c.geography||"")} · ${esc(c.sector||"")} · ${esc(c.series_id||"")} · ${esc(c.calculation_type||"")}
+      — absolute and percent change are both computed from this same observation pair.</div>
+  </section>`;
+}
+
+function renderSources(citations, used){
+  const list = (citations||[]).filter(s => !used || used.has(s.index));
+  if(!list.length) return "";
+  return `<section class="card"><h2>Sources used</h2><div class="sources">` + list.map(s => `
     <div class="source" id="source-${s.index}">
-      <div class="h"><span class="n">${s.index}</span>
-        <span class="org">${esc(s.source_name)} · ${esc(s.source_type)}</span></div>
+      <div class="h"><span class="n">${s.index}</span><span class="org">${esc(s.source_name)} · ${esc(s.source_type)}</span></div>
       <div class="t">${esc(s.title)}</div>
       ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a>` : `<span class="muted">no url</span>`}
       <div class="ex">${esc(s.excerpt)}…</div>
@@ -192,28 +230,20 @@ function renderSources(citations){
     </div>`).join("") + `</div></section>`;
 }
 
-function renderSql(sqlResults){
-  if(!sqlResults || !sqlResults.length) return "";
-  let rows = "";
-  for(const r of sqlResults){
-    if("operation" in r){
-      rows += `<tr><td>deterministic</td><td>${esc(r.operation)}</td><td>${esc(r.value)}</td></tr>`;
-    } else {
-      const d = r.derived || {};
-      rows += `<tr><td>lookup</td><td>count=${esc(d.count)} avg=${esc(d.average)} min=${esc(d.minimum)} max=${esc(d.maximum)}</td><td>${(r.rows||[]).length} rows</td></tr>`;
-    }
-  }
-  return `<section class="card"><h2>Verified numbers (SQL)</h2>
-    <table class="sql"><thead><tr><th>tool</th><th>result</th><th>rows</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="muted" style="font-size:12px;margin-top:8px">Every price figure in the answer originates here — not from the model.</p></section>`;
+function renderMonthly(sqlResults){
+  let rows = null;
+  for(const r of (sqlResults||[])){ if(r.rows && r.rows.length){ rows = r.rows; break; } }
+  if(!rows || !rows.length) return "";
+  const body = rows.map(r => `<tr><td>${esc((r.period||"").slice(0,10))}</td><td>${r.price}</td><td>${esc(r.units||"")}</td></tr>`).join("");
+  return `<details class="insp"><summary>View monthly data (${rows.length} observations)</summary>
+    <div class="body"><div class="scroll"><table class="sql"><thead><tr><th>period</th><th>price</th><th>unit</th></tr></thead><tbody>${body}</tbody></table></div></div></details>`;
 }
 
 function renderGrounding(g){
   if(!g) return "";
-  const ok = g.valid;
   const un = (g.ungrounded||[]).length ? `<div class="muted" style="font-size:12px;margin-top:6px">ungrounded: ${esc(g.ungrounded.join(", "))}</div>` : "";
   return `<div style="margin-top:12px">
-    <span class="badge ${ok?'ok':'no'}">${ok?'grounded':'check failed'}</span>
+    <span class="badge ${g.valid?'ok':'no'}">${g.valid?'grounded':'check failed'}</span>
     <span class="muted" style="font-size:12.5px;margin-left:8px">
       numeric ${g.grounded_numeric_claims}/${g.total_numeric_claims} ·
       citations ${g.citations_valid?'valid':'invalid'} ·
@@ -223,18 +253,17 @@ function renderGrounding(g){
 
 function renderInspector(t, g){
   if(!t) return "";
-  const kv = `
-    <div class="kv">
+  const kv = `<div class="kv">
       <div class="k">retrieval query</div><div class="v">${esc(t.retrieval_query ?? "—")}</div>
       <div class="k">requested period</div><div class="v">${t.requested_period && t.requested_period.start ? esc(t.requested_period.start) + " → " + esc(t.requested_period.end) : "—"}</div>
-      <div class="k">embedding</div><div class="v">${esc(t.embedding_model)} · ${t.embedding_dim}-dim (normalized)</div>
-      <div class="k">candidates / top-n</div><div class="v">${t.candidate_count} / ${t.top_n}</div>
+      <div class="k">embedding</div><div class="v">${esc(t.embedding_model)} · ${t.embedding_dim}-dim</div>
+      <div class="k">candidates → accepted</div><div class="v">${t.candidate_count} → ${t.accepted_count} (top_n ${t.top_n})</div>
       <div class="k">ranking formula</div><div class="v">${esc(t.ranking_formula)}</div>
     </div>`;
   const chunks = (t.chunks||[]).map(c => `
-    <div class="chunk">
+    <div class="chunk ${c.accepted?'':'rej'}">
       <div class="top"><span class="rank">#${c.rank} · final ${c.final_score}</span>
-        <span class="pass ${c.passed_to_llm?'':'no'}">${c.passed_to_llm?'passed to LLM':'candidate'}</span></div>
+        <span class="pass ${c.accepted?'':'no'}">${c.accepted ? 'accepted → LLM' : esc(c.rejection_reason || 'rejected')}</span></div>
       <div class="bars">
         ${bar("semantic", c.semantic_similarity)}
         ${bar("temporal", c.temporal_score)}
@@ -244,18 +273,20 @@ function renderInspector(t, g){
       <div class="src">${esc(c.source_name)} · <span class="muted">${esc(c.section || "—")}</span></div>
       <div class="src">${esc(c.document_title)}</div>
       <div class="src"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(c.source_url)}</a></div>
-      <div class="src muted" style="font-size:11.5px">event ${c.start_year ?? "?"}–${c.end_year ?? "?"} · published ${c.published_date ?? "—"} · temporal: ${esc(c.temporal_reason)}</div>
+      <div class="src muted" style="font-size:11.5px">event ${c.start_year ?? "?"}–${c.end_year ?? "?"} · published ${c.published_date ?? "—"} · temporal ${esc(c.temporal_reason)} (coverage ${c.temporal_coverage ?? "—"}, specificity ${c.temporal_specificity ?? "—"}, span ${c.chunk_span ?? "—"})</div>
       <div class="txt">${esc(c.text)}</div>
       <span class="more">show full chunk</span>
     </div>`).join("");
-  return `<details class="insp"><summary>Inspect retrieval (${t.candidate_count} candidates → ${t.top_n} passed)</summary>
+  return `<details class="insp"><summary>Inspect retrieval (${t.candidate_count} candidates → ${t.accepted_count} accepted)</summary>
     <div class="body">${kv}${chunks}${renderGrounding(g)}</div></details>`;
 }
 
 function render(d){
-  let html = `<section class="card"><h2>Answer</h2><div class="answer">${mdToHtml(d.answer || "(no answer)")}</div></section>`;
-  html += renderSources(d.citations || []);
-  html += renderSql(d.sql_results || []);
+  const used = new Set(d.grounding ? (d.grounding.citations_used||[]) : []);
+  let html = renderChange(d.sql_results || []);
+  html += `<section class="card"><h2>Answer</h2><div class="answer">${mdToHtml(d.answer || "(no answer)")}</div></section>`;
+  html += renderSources(d.citations || [], used);
+  html += renderMonthly(d.sql_results || []);
   html += renderInspector(d.trace, d.grounding);
   $("#out").innerHTML = html;
   $("#out").querySelectorAll(".more").forEach(el => el.addEventListener("click", () => {
@@ -267,30 +298,22 @@ function render(d){
 async function ask(){
   const q = $("#q").value.trim();
   if(!q) return;
-  $("#err").classList.remove("on");
-  $("#out").innerHTML = "";
-  $("#ask").disabled = true;
-  $("#status").classList.add("on");
-  const stages = ["Interpreting question…","Retrieving verified numbers (SQL)…","Searching sources (pgvector)…","Ranking evidence…","Synthesizing cited answer…"];
+  $("#err").classList.remove("on"); $("#out").innerHTML = "";
+  $("#ask").disabled = true; $("#status").classList.add("on");
+  const stages = ["Interpreting question…","Retrieving verified numbers (SQL)…","Finding the largest change…","Searching sources (pgvector)…","Ranking + diversifying evidence…","Synthesizing cited answer…"];
   let i = 0; $("#statusText").textContent = stages[0];
   const timer = setInterval(() => { i = (i+1) % stages.length; $("#statusText").textContent = stages[i]; }, 1600);
   try{
-    const res = await fetch("/ask", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({question:q, include_trace:true})
-    });
-    if(!res.ok){ throw new Error("HTTP " + res.status + ": " + (await res.text()).slice(0,300)); }
+    const res = await fetch("/ask", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({question:q, include_trace:true}) });
+    if(!res.ok) throw new Error("HTTP " + res.status + ": " + (await res.text()).slice(0,300));
     render(await res.json());
   }catch(e){
-    $("#err").textContent = "Request failed — " + e.message;
-    $("#err").classList.add("on");
+    $("#err").textContent = "Request failed — " + e.message; $("#err").classList.add("on");
   }finally{
-    clearInterval(timer);
-    $("#status").classList.remove("on");
-    $("#ask").disabled = false;
+    clearInterval(timer); $("#status").classList.remove("on"); $("#ask").disabled = false;
   }
 }
-
 $("#ask").addEventListener("click", ask);
 $("#q").addEventListener("keydown", e => { if((e.metaKey||e.ctrlKey) && e.key === "Enter") ask(); });
 $("#chips").innerHTML = EXAMPLES.map(x => `<button class="chip">${esc(x)}</button>`).join("");

@@ -58,7 +58,7 @@ class AgentOrchestrator:
             for call in tool_calls:
                 name = call["name"]
                 arguments = call["arguments"]
-                result = execute_tool(name, arguments)
+                result = execute_tool(name, arguments, sql_results)
                 calls_log.append({"name": name, "arguments": arguments})
 
                 if name in {"structured_price_lookup", "deterministic_calculation"}:
@@ -68,7 +68,8 @@ class AgentOrchestrator:
                     if trace:
                         retrieval_trace = trace
                         retrieval_query = trace.get("retrieval_query")
-                        evidence = trace.get("chunks", [])
+                        # Only accepted evidence is passed to synthesis.
+                        evidence = [c for c in trace.get("chunks", []) if c.get("accepted")]
 
                 # The result sent to the model excludes the private trace.
                 messages.append(

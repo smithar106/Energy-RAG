@@ -25,7 +25,7 @@ from app.db.base import init_db, reset_rag_tables, session_scope
 from app.db.models import Chunk, Document, PriceRecord
 from app.ingestion.eia import EIAClient
 from app.ingestion.pipeline import ingest_price_points, store_raw_document, store_source_document
-from app.ingestion.sources import eia_articles, wikipedia
+from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
 from app.retrieval.service import make_retrieval_query, retrieve
 from app.retrieval.temporal import TimePeriod, parse_time_period
@@ -92,6 +92,8 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
     top_n = int(t.get("top_n") or 0)
     chunks = []
     for rank, c in enumerate(t.get("chunks", [])):
+        meta = c.get("temporal_meta") or {}
+        accepted = bool(c.get("accepted"))
         chunks.append(
             ChunkTrace(
                 rank=rank,
@@ -108,10 +110,15 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
                 semantic_similarity=c.get("semantic_similarity", 0.0),
                 temporal_score=c.get("temporal_score", 0.0),
                 temporal_reason=c.get("temporal_reason"),
+                temporal_coverage=meta.get("coverage"),
+                temporal_specificity=meta.get("specificity"),
+                chunk_span=meta.get("chunk_span"),
                 authority_score=c.get("authority_score", 0.0),
                 final_score=c.get("final_score", 0.0),
+                accepted=accepted,
+                rejection_reason=c.get("rejection_reason"),
+                passed_to_llm=accepted,
                 text=c.get("text", ""),
-                passed_to_llm=rank < top_n,
             )
         )
     return RAGTrace(
@@ -122,6 +129,7 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
         embedding_dim=int(t.get("embedding_dim") or 0),
         query_embedding=[float(x) for x in t.get("query_embedding", [])],
         candidate_count=int(t.get("candidate_count") or 0),
+        accepted_count=int(t.get("accepted_count") or 0),
         top_n=top_n,
         ranking_weights=t.get("weights", {}),
         ranking_formula=t.get("formula", ""),
@@ -175,6 +183,7 @@ def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
             "query_embedding": result.query_embedding,
             "embedding_dim": len(result.query_embedding),
             "candidate_count": result.candidate_count,
+            "accepted_count": len(result.ranked),
             "top_n": result.top_n,
             "weights": result.weights,
             "formula": result.formula,
@@ -248,6 +257,52 @@ def admin_ingest_eia(
                 document_id=doc_id,
                 chunks=n,
                 published_date=doc.published_date,
+            )
+        )
+    return results
+
+
+@app.post("/admin/ingest/eia-archive", response_model=list[IngestSourceResponse])
+def admin_ingest_eia_archive(
+    offset: int = 0, limit: int = 1, force: bool = False
+) -> list[IngestSourceResponse]:
+    items = eia_articles.list_archive_articles()[offset : offset + limit]
+    results: list[IngestSourceResponse] = []
+    for item in items:
+        doc = eia_articles.fetch_article(
+            item.url, title=item.title, published_date=item.published_date
+        )
+        if doc is None:
+            continue
+        doc_id, n = store_source_document(doc, force=force)
+        results.append(
+            IngestSourceResponse(
+                title=doc.title,
+                source_name=doc.source_name,
+                source_url=doc.source_url,
+                document_id=doc_id,
+                chunks=n,
+                published_date=doc.published_date,
+            )
+        )
+    return results
+
+
+@app.post("/admin/ingest/eia-explained", response_model=list[IngestSourceResponse])
+def admin_ingest_eia_explained(force: bool = False) -> list[IngestSourceResponse]:
+    results: list[IngestSourceResponse] = []
+    for url, title in eia_explained.EXPLAINED_PAGES:
+        doc = eia_explained.fetch_page(url, title)
+        if doc is None:
+            continue
+        doc_id, n = store_source_document(doc, force=force)
+        results.append(
+            IngestSourceResponse(
+                title=doc.title,
+                source_name=doc.source_name,
+                source_url=doc.source_url,
+                document_id=doc_id,
+                chunks=n,
             )
         )
     return results

@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     hf_home: str = "/app/.hf_cache"
 
     # Retrieval knobs.
-    retrieval_top_k: int = 12   # pgvector candidate pool before ranking
-    rerank_top_n: int = 5       # chunks passed to synthesis
+    retrieval_top_k: int = 40   # pgvector candidate pool before ranking (stage 1)
+    rerank_top_n: int = 5       # accepted evidence passed to synthesis (stage 2)
 
 
 @lru_cache

@@ -60,10 +60,15 @@ class ChunkTrace(BaseModel):
     semantic_similarity: float
     temporal_score: float
     temporal_reason: str | None = None
+    temporal_coverage: float | None = None
+    temporal_specificity: float | None = None
+    chunk_span: int | None = None
     authority_score: float
     final_score: float
-    text: str
+    accepted: bool = False
+    rejection_reason: str | None = None
     passed_to_llm: bool = False
+    text: str
 
 
 class RAGTrace(BaseModel):
@@ -74,6 +79,7 @@ class RAGTrace(BaseModel):
     embedding_dim: int
     query_embedding: list[float] = Field(default_factory=list)
     candidate_count: int = 0
+    accepted_count: int = 0
     top_n: int = 0
     ranking_weights: dict = Field(default_factory=dict)
     ranking_formula: str = ""

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from email.utils import parsedate_to_datetime
+from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -20,6 +21,7 @@ from app.ingestion.html import Segment, clean_inline, html_to_segments
 from app.ingestion.sources.base import USER_AGENT, SourceDocument
 
 RSS_URL = "https://www.eia.gov/rss/todayinenergy.xml"
+ARCHIVE_URL = "https://www.eia.gov/todayinenergy/archive.php"
 SOURCE_NAME = "U.S. Energy Information Administration"
 SOURCE_TYPE = "EIA Analysis"
 
@@ -139,3 +141,48 @@ def fetch_article(
         segments=segments,
         published_date=published_date,
     )
+
+
+_LONG_DATE_RE = re.compile(r"([A-Z][a-z]+ \d{1,2}, \d{4})")
+
+
+def _parse_long_date(value: str) -> date | None:
+    try:
+        return datetime.strptime(value, "%B %d, %Y").date()
+    except ValueError:
+        return None
+
+
+def list_archive_articles(*, limit: int = 400) -> list[EIAItem]:
+    """Discover historical Today in Energy articles from the archive page.
+
+    Each list item carries its date and title, so older analysis (back to the
+    start of the Today in Energy archive) can be ingested, not just the RSS.
+    """
+    resp = httpx.get(
+        ARCHIVE_URL, headers={"User-Agent": USER_AGENT}, timeout=30.0, follow_redirects=True
+    )
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    items: list[EIAItem] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a", href=True):
+        if not _valid_link(anchor["href"]):
+            continue
+        url = urljoin(ARCHIVE_URL, anchor["href"])
+        if url in seen:
+            continue
+        title = clean_inline(anchor.get_text(" ", strip=True))
+        published = None
+        li = anchor.find_parent("li")
+        if li is not None:
+            m = _LONG_DATE_RE.search(li.get_text(" ", strip=True))
+            if m:
+                published = _parse_long_date(m.group(1))
+        if title and published:
+            seen.add(url)
+            items.append(EIAItem(title=title, url=url, published_date=published, description=""))
+        if len(items) >= limit:
+            break
+    return items

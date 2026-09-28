@@ -13,6 +13,18 @@ from app.db.base import session_scope
 from app.retrieval.temporal import TimePeriod
 
 
+def default_series_id() -> str | None:
+    """Return the most populated price series (fallback when none is given)."""
+    with session_scope() as session:
+        row = session.execute(
+            text(
+                "SELECT series_id FROM price_records "
+                "GROUP BY series_id ORDER BY COUNT(*) DESC LIMIT 1"
+            )
+        ).first()
+    return row[0] if row else None
+
+
 def _period_fragment(period: TimePeriod) -> tuple[str, dict]:
     if period.start and period.end:
         return "AND period BETWEEN :t_start AND :t_end", {
@@ -104,25 +116,16 @@ def deterministic_calculation(
             v = session.execute(text(sql), params).scalar()
             return {"operation": operation, "value": float(v) if v is not None else None}
 
-        if operation in {"change", "pct_change"}:
-            sql = f"""
-                WITH bounds AS (
-                    SELECT
-                        (array_agg(price ORDER BY period ASC))[1]  AS first_price,
-                        (array_agg(price ORDER BY period DESC))[1] AS last_price
-                    FROM price_records
-                    WHERE 1=1 {frag} {series_clause}
-                )
-                SELECT first_price, last_price,
-                       (last_price - first_price) AS change,
-                       CASE WHEN first_price = 0 THEN NULL
-                            ELSE ROUND(((last_price - first_price) / first_price * 100)::numeric, 2)
-                       END AS pct_change
-                FROM bounds
-            """
-            row = dict(session.execute(text(sql), params).mappings().one())
-            if operation == "change":
-                return {"operation": operation, "value": row["change"]}
-            return {"operation": operation, "value": row["pct_change"]}
+    if operation in {"change", "pct_change"}:
+        # Return the full observation pair so the two figures can never be
+        # recombined with a change computed over a different pair.
+        from app.retrieval.changes import endpoint_change
+
+        if not series_id:
+            raise ValueError("change calculations require a series_id")
+        change = endpoint_change(series_id, period)
+        if change is None:
+            return {"operation": operation, "price_change": None}
+        return {"operation": "period_end_to_end", "price_change": change.to_dict()}
 
     raise ValueError(f"unknown operation: {operation}")
