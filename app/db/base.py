@@ -19,13 +19,23 @@ _engine = None
 _SessionLocal = None
 
 
+def _normalize_url(url: str) -> str:
+    """Railway injects ``postgresql://`` (psycopg2 default). We use psycopg3,
+    so force the driver explicitly."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
+
+
 def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
         if not settings.database_url:
             raise RuntimeError("DATABASE_URL is not set")
-        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+        _engine = create_engine(_normalize_url(settings.database_url), pool_pre_ping=True)
     return _engine
 
 
