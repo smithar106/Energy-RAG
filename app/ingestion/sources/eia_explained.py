@@ -15,7 +15,7 @@ from app.ingestion.sources.base import USER_AGENT, SourceDocument
 SOURCE_NAME = "U.S. Energy Information Administration"
 SOURCE_TYPE = "EIA Explainer"
 
-BASE = "https://www.eia.gov/electricity/"
+BASE = "https://www.eia.gov/energyexplained/electricity/"
 EXPLAINED_PAGES: list[tuple[str, str]] = [
     (BASE + "prices-and-factors-affecting-prices.php",
      "Electricity explained: Prices and factors affecting prices"),
