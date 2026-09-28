@@ -23,8 +23,13 @@ def vector_search(
     embedder = get_embedding_provider()
     query_vector = embedder.embed_query(retrieval_query)
 
+    # pgvector's ``vector`` type is not a native psycopg type, so a bare Python
+    # list cannot be bound to the ``<=>`` operator. Serialize it to the textual
+    # ``[1,2,3]`` form and CAST explicitly.
+    qvec = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
+
     params: dict = {
-        "qvec": query_vector,
+        "qvec": qvec,
         "top_k": top_k,
     }
     period_clause = ""
@@ -44,12 +49,12 @@ def vector_search(
             d.source_url,
             c.start_date,
             c.end_date,
-            1 - (c.embedding <=> :qvec) AS similarity
+            1 - (c.embedding <=> CAST(:qvec AS vector)) AS similarity
         FROM chunks c
         JOIN documents d ON d.id = c.document_id
         WHERE c.embedding IS NOT NULL
           {period_clause}
-        ORDER BY c.embedding <=> :qvec
+        ORDER BY c.embedding <=> CAST(:qvec AS vector)
         LIMIT :top_k
     """
 
