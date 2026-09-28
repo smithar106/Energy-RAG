@@ -1,26 +1,37 @@
 """Temporal filtering.
 
 Extracts a time period from a natural-language question and applies it to both
-the SQL path (period filters) and the vector path (chunk ``start_date`` /
-``end_date`` overlap).
+the SQL path (period filters) and the vector path (chunk event-window filters).
+
+Handles explicit ranges ("between 2021 and 2023", "2014-2016"), single years,
+named months, and a small set of well-known event aliases (e.g. COVID-19).
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
-# Ordered, case-insensitive: most specific first.
-_PATTERNS: list[tuple[re.Pattern, int]] = [
-    (re.compile(r"(\d{4})-(\d{2})"), 1),          # 2020-03
-    (re.compile(r"(\d{4})"), 2),                  # 2020
-    (re.compile(r"20\d\d"), 2),                   # 20xx
-]
+_RANGE_RE = re.compile(
+    r"(1[89]\d{2}|20\d{2})\s*(?:-|–|—|to|through|and)\s*(1[89]\d{2}|20\d{2})",
+    re.I,
+)
+_YEAR_RE = re.compile(r"(1[89]\d{2}|20\d{2})")
 
 _MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
     "december": 12,
+}
+
+# Well-known event aliases → event window (start_year, end_year).
+_PERIOD_ALIASES: dict[str, tuple[int, int]] = {
+    "covid-19": (2020, 2021),
+    "covid": (2020, 2021),
+    "coronavirus": (2020, 2021),
+    "great recession": (2007, 2009),
+    "financial crisis": (2007, 2009),
+    "global financial crisis": (2007, 2009),
 }
 
 
@@ -34,11 +45,10 @@ class TimePeriod:
         return self.start is not None or self.end is not None
 
     def overlaps(self, start: date | None, end: date | None) -> bool:
-        """Does a chunk [start, end] overlap this period?"""
         if not self.is_bounded:
             return True
         if start is None and end is None:
-            return True  # chunk has no temporal metadata → keep (can't filter)
+            return True
         lo = start or date.min
         hi = end or date.max
         return (self.start is None or hi >= self.start) and (
@@ -48,14 +58,23 @@ class TimePeriod:
 
 def parse_time_period(question: str) -> TimePeriod:
     """Best-effort deterministic period extraction from a question."""
-    q = question.lower()
-    year_match = re.search(r"(19|20)\d{2}", q)
+    q = (question or "").lower()
+
+    for alias, (start_year, end_year) in _PERIOD_ALIASES.items():
+        if alias in q:
+            return TimePeriod(start=date(start_year, 1, 1), end=date(end_year, 12, 31))
+
+    range_match = _RANGE_RE.search(q)
+    if range_match:
+        y1, y2 = int(range_match.group(1)), int(range_match.group(2))
+        lo, hi = sorted((y1, y2))
+        return TimePeriod(start=date(lo, 1, 1), end=date(hi, 12, 31))
+
+    year_match = _YEAR_RE.search(q)
     if not year_match:
         return TimePeriod()
+    year = int(year_match.group(1))
 
-    year = int(year_match.group(0))
-
-    # A named month near the year narrows the period to that month.
     month: int | None = None
     for name, m in _MONTHS.items():
         if name in q:
@@ -64,10 +83,7 @@ def parse_time_period(question: str) -> TimePeriod:
 
     if month:
         start = date(year, month, 1)
-        end = date(year, month + 1, 1) if month < 12 else date(year + 1, 1, 1)
-        from datetime import timedelta
-
-        end = end - timedelta(days=1)
+        end = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)) - timedelta(days=1)
         return TimePeriod(start=start, end=end)
 
     return TimePeriod(start=date(year, 1, 1), end=date(year, 12, 31))
