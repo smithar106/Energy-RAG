@@ -425,6 +425,33 @@ def admin_reset_rag() -> ResetResponse:
     return ResetResponse(dropped=["chunks", "documents"], recreated=["documents", "chunks"])
 
 
+@app.post("/admin/backfill")
+def admin_backfill() -> dict:
+    """Populate energy-domain + temporal metadata for existing chunks."""
+    from app.ingestion.domain import classify_domain
+    from app.ingestion.metadata import extract_event_window, extract_mentioned_years
+
+    with session_scope() as session:
+        chunks = session.query(Chunk).all()
+        updated = 0
+        for chunk in chunks:
+            blob = f"{chunk.document_title or ''}. {chunk.text or ''}"
+            domain = classify_domain(blob)
+            event_start, event_end = extract_event_window(
+                chunk.text or "", title=chunk.document_title or "", published_date=chunk.published_date
+            )
+            chunk.energy_type = domain.energy_type
+            chunk.market_layer = domain.market_layer
+            chunk.geography = domain.geography
+            chunk.sector = domain.sector
+            chunk.mentioned_years = extract_mentioned_years(blob)
+            chunk.event_start_date = event_start
+            chunk.event_end_date = event_end
+            updated += 1
+        session.commit()
+    return {"backfilled_chunks": updated}
+
+
 @app.get("/admin/coverage")
 def admin_coverage() -> dict:
     """Yearly + energy-domain coverage for the audit script."""
