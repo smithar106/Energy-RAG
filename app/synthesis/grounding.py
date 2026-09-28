@@ -17,11 +17,14 @@ trim ungrounded numbers based on it.
 from __future__ import annotations
 
 import re
+from numbers import Number
 
 from app.schemas.api import GroundingCheck
 
 # Numbers that legitimately come from years/dates rather than SQL prices.
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+# Citation markers like [0], [1] are references, not quantities.
+_CITE_RE = re.compile(r"\[\d+\]")
 
 
 def _collect_sql_numbers(sql_results: list[dict]) -> set[float]:
@@ -30,15 +33,15 @@ def _collect_sql_numbers(sql_results: list[dict]) -> set[float]:
         derived = res.get("derived", {})
         for key in ("average", "minimum", "maximum", "count"):
             v = derived.get(key)
-            if isinstance(v, (int, float)):
+            if isinstance(v, Number):
                 nums.add(round(float(v), 4))
-        # deterministic_calculation returns {"operation", "value"}
+        # deterministic_calculation returns {"operation", "value"} (may be Decimal)
         v = res.get("value")
-        if isinstance(v, (int, float)):
+        if isinstance(v, Number):
             nums.add(round(float(v), 4))
         for row in res.get("rows", []):
             price = row.get("price")
-            if isinstance(price, (int, float)):
+            if isinstance(price, Number):
                 nums.add(round(float(price), 4))
     return nums
 
@@ -52,11 +55,12 @@ def _collect_evidence_numbers(evidence: list[dict]) -> set[float]:
 
 
 def _numeric_claims(answer: str) -> list[tuple[str, float]]:
+    # Strip citation markers so "[0]" is not read as a quantity.
+    answer = _CITE_RE.sub(" ", answer)
     claims = []
     for m in re.finditer(r"(\d+(?:\.\d+)?)", answer):
         raw = m.group(0)
         # Skip years — those are temporal anchors, not price figures.
-        full = answer[max(0, m.start() - 20): m.end() + 4]
         if _YEAR_RE.search(raw) and len(raw) == 4:
             continue
         claims.append((raw, round(float(raw), 4)))
