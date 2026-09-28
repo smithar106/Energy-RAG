@@ -65,7 +65,19 @@ class DeepSeekProvider:
         for m in messages:
             entry: dict[str, Any] = {"role": m.role, "content": m.content}
             if m.tool_calls:
-                entry["tool_calls"] = m.tool_calls
+                # DeepSeek/OpenAI wire format requires the "type" and nested
+                # "function" keys on each tool call.
+                entry["tool_calls"] = [
+                    {
+                        "id": tc.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name"),
+                            "arguments": tc.get("arguments", ""),
+                        },
+                    }
+                    for tc in m.tool_calls
+                ]
             if m.tool_call_id:
                 entry["tool_call_id"] = m.tool_call_id
             if m.name:
