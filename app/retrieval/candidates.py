@@ -41,14 +41,16 @@ def domain_clause(
     params: dict,
     alias: str = "c",
 ) -> str:
-    """Permissive candidate-level filter: keep compatible or unlabelled chunks."""
+    """Permissive candidate-level filter: keep compatible or unlabelled chunks.
+
+    Only energy type is filtered at candidate level. Geography is a soft rerank
+    score, not a candidate filter, because global market analyses are relevant
+    to U.S. price questions.
+    """
     clause = ""
     if energy_type:
         allowed = COMPATIBLE_ENERGY.get(energy_type)
         if allowed:
             literals = ", ".join(f"'{a}'" for a in sorted(allowed))
             clause += f" AND ({alias}.energy_type IS NULL OR {alias}.energy_type IN ({literals}))"
-    if geography:
-        params["geo"] = geography
-        clause += f" AND ({alias}.geography IS NULL OR {alias}.geography = :geo)"
     return clause
