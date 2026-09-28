@@ -13,9 +13,10 @@ pipeline is::
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import func, select
 
 from app.agent.orchestrator import AgentOrchestrator
@@ -58,44 +59,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Energy-RAG", version="0.2.0", lifespan=lifespan)
 
 
-# ── Landing ────────────────────────────────────────────────────────────────
-_LANDING = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Energy-RAG</title>
-<style>
- body{font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:52rem;margin:3rem auto;padding:0 1.25rem;color:#1a1a1a}
- h1{font-size:1.4rem;margin:0 0 .25rem} p.sub{color:#666;margin:0 0 2rem}
- h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:#888;margin:2rem 0 .5rem;border-bottom:1px solid #eee;padding-bottom:.35rem}
- code{background:#f4f4f4;padding:.1rem .3rem;border-radius:3px}
- li{margin:.3rem 0} a{color:#0a58ca;text-decoration:none} a:hover{text-decoration:underline}
- .m{color:#888}
-</style></head><body>
-<h1>Energy-RAG</h1>
-<p class="sub">Hybrid retrieval RAG for historical energy prices — DeepSeek + pgvector + EIA.</p>
-<h2>Interactive</h2>
-<ul>
- <li><a href="/docs">/docs</a> <span class="m">— OpenAPI / Swagger UI</span></li>
- <li><a href="/health">/health</a> <span class="m">— liveness + provider info</span></li>
- <li><a href="/admin/stats">/admin/stats</a> <span class="m">— knowledge-base verification</span></li>
-</ul>
-<h2>Endpoints</h2>
-<ul>
- <li><code>POST /ask</code> — full pipeline, returns cited answer + RAG trace</li>
- <li><code>POST /debug/retrieval</code> — retrieval only, with ranking scores</li>
- <li><code>POST /ingest/eia</code> — ingest an EIA price series (structured)</li>
- <li><code>POST /admin/ingest/eia</code> — ingest EIA Today in Energy articles (RAG)</li>
- <li><code>POST /admin/ingest/wikipedia</code> — ingest a Wikipedia article (RAG)</li>
- <li><code>POST /admin/reset-rag</code> — drop + recreate RAG tables (keeps price_records)</li>
-</ul>
-<h2>Example</h2>
-<pre>curl -X POST "https://&lt;this-host&gt;/ask" -H 'Content-Type: application/json' \\
-  -d '{"question":"Why did electricity prices rise between 2021 and 2023?"}'</pre>
-</body></html>"""
+# ── Web UI ─────────────────────────────────────────────────────────────────
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 @app.get("/", response_class=HTMLResponse)
-def root() -> str:
-    return _LANDING
+def root() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/health")
