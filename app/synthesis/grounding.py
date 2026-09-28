@@ -82,9 +82,10 @@ def validate_grounding(
 
     # Explanatory grounding via DeepSeek (evidence-only judgement).
     if llm_check and evidence:
-        check.explanatory_claims = _verify_explanations(answer, evidence)
-        check.total_explanatory_claims = max(1, len(evidence))
-        check.grounded_explanatory_claims = check.explanatory_claims
+        grounded = _verify_explanations(answer, evidence)
+        check.total_explanatory_claims = len(evidence)
+        check.grounded_explanatory_claims = grounded
+        check.valid = check.valid and grounded > 0
 
     check.valid = check.grounded_numeric_claims == check.total_numeric_claims
     return check
