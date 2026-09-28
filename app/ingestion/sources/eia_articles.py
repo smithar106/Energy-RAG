@@ -30,6 +30,13 @@ _BOILERPLATE_RE = re.compile(
     re.I,
 )
 
+# A valid EIA article URL carries a numeric id, e.g. detail.php?id=68204.
+_ARTICLE_URL_RE = re.compile(r"detail\.php\?id=\d+", re.I)
+
+
+def _valid_link(link: str) -> bool:
+    return bool(link) and bool(_ARTICLE_URL_RE.search(link))
+
 
 @dataclass
 class EIAItem:
@@ -60,7 +67,7 @@ def list_recent_articles(*, limit: int = 50) -> list[EIAItem]:
         title = (node.findtext("title") or "").strip()
         link = (node.findtext("link") or "").strip()
         published = _parse_pubdate(node.findtext("pubDate"))
-        if title and link and published:
+        if title and _valid_link(link) and published:
             items.append(
                 EIAItem(
                     title=title,
@@ -103,13 +110,22 @@ def fetch_article(
     if body is None:
         return None
 
+    # Prefer the (validated) feed URL; only accept a canonical tag if it is a
+    # well-formed article URL.
     canonical_tag = soup.find("link", rel="canonical")
-    canonical_url = (canonical_tag.get("href") if canonical_tag else None) or url
+    canonical_candidate = canonical_tag.get("href") if canonical_tag else None
+    source_url = (
+        canonical_candidate
+        if canonical_candidate and _valid_link(canonical_candidate)
+        else url
+    )
+    if not _valid_link(source_url):
+        return None
 
     doc_title = title
     if not doc_title:
         h1 = soup.find("h1")
-        doc_title = h1.get_text(" ", strip=True) if h1 else canonical_url
+        doc_title = h1.get_text(" ", strip=True) if h1 else source_url
 
     segments = _strip_boilerplate(html_to_segments(str(body)))
     if not segments:
@@ -119,7 +135,7 @@ def fetch_article(
         title=doc_title,
         source_name=SOURCE_NAME,
         source_type=SOURCE_TYPE,
-        source_url=canonical_url,
+        source_url=source_url,
         segments=segments,
         published_date=published_date,
     )
