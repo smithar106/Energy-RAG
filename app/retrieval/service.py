@@ -24,7 +24,6 @@ from app.retrieval.query_builder import build_retrieval_queries
 from app.retrieval.ranking import (
     DEFAULT_WEIGHTS,
     RANKING_FORMULA,
-    apply_diversity,
     gate_chunks,
     rank_chunks,
 )
@@ -124,13 +123,11 @@ def retrieve(
     # Stage 2: rerank (composite score).
     ranked_all = rank_chunks(candidates, intent=intent, query_text=query_text)
 
-    # Stage 3: evidence gate.
+    # Stage 3: evidence gate (hard filters). `ranked` = all gate-passed chunks;
+    # final diversity + causal filtering happen downstream in the ask flow.
     passed, rejected = gate_chunks(ranked_all, intent=intent)
-
-    accepted = apply_diversity(passed, top_n)
-    accepted_ids = {c["id"] for c in accepted}
     for c in passed:
-        c["accepted"] = c["id"] in accepted_ids
+        c["accepted"] = True
     for c in rejected:
         c["accepted"] = False
 
@@ -145,6 +142,6 @@ def retrieve(
         lexical_count=len(lexical),
         candidate_count=len(candidates),
         ranked_all=combined,
-        ranked=accepted,
+        ranked=passed,
         top_n=top_n,
     )

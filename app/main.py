@@ -30,6 +30,7 @@ from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
 from app.retrieval.changes import largest_changes
 from app.retrieval.intent import parse_intent
+from app.retrieval.ranking import apply_diversity
 from app.retrieval.service import make_retrieval_query, retrieve
 from app.retrieval.sql import default_series_id
 from app.retrieval.temporal import TimePeriod, parse_time_period
@@ -205,11 +206,12 @@ def ask(req: AskRequest) -> AskResponse:
     agent_result = AgentOrchestrator().run(question)
     _supplement_largest_change(question, agent_result.sql_results)
 
-    # Causal-usefulness refinement for "why" questions.
+    # Evidence pipeline: gate-passed → causal-usefulness → diversity.
     intent = parse_intent(question, agent_result.sql_results)
-    evidence = agent_result.evidence
+    evidence = agent_result.evidence  # all gate-passed chunks
     if intent.is_causal:
-        evidence = filter_causally_useful(question, evidence)
+        evidence = filter_causally_useful(question, evidence[:30])
+    evidence = apply_diversity(evidence, settings.rerank_top_n)
 
     answer = Synthesizer().synthesize(question, agent_result.sql_results, evidence)
     grounding = validate_grounding(answer, agent_result.sql_results, evidence)
