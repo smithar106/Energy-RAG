@@ -32,6 +32,10 @@ def _collect_sql_numbers(sql_results: list[dict]) -> set[float]:
             v = derived.get(key)
             if isinstance(v, (int, float)):
                 nums.add(round(float(v), 4))
+        # deterministic_calculation returns {"operation", "value"}
+        v = res.get("value")
+        if isinstance(v, (int, float)):
+            nums.add(round(float(v), 4))
         for row in res.get("rows", []):
             price = row.get("price")
             if isinstance(price, (int, float)):

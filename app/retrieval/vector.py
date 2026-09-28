@@ -66,8 +66,4 @@ def vector_search(
 
     for r in rows:
         r["similarity"] = float(r["similarity"])
-        if r.get("start_date"):
-            r["start_date"] = r["start_date"].isoformat()
-        if r.get("end_date"):
-            r["end_date"] = r["end_date"].isoformat()
     return rows
