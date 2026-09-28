@@ -21,12 +21,6 @@ class Source(BaseModel):
     excerpt: str
 
 
-class SQLResult(BaseModel):
-    query: str
-    rows: list[dict]
-    derived: dict = Field(default_factory=dict)
-
-
 class GroundingCheck(BaseModel):
     total_numeric_claims: int = 0
     grounded_numeric_claims: int = 0
@@ -39,7 +33,9 @@ class GroundingCheck(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     citations: list[Source] = Field(default_factory=list)
-    sql_results: list[SQLResult] = Field(default_factory=list)
+    # Heterogeneous tool results: structured_price_lookup -> {query, rows, derived},
+    # deterministic_calculation -> {operation, value}.
+    sql_results: list[dict] = Field(default_factory=list)
     retrieved_chunks: int = 0
     grounding: GroundingCheck = Field(default_factory=GroundingCheck)
 
