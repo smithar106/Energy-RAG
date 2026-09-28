@@ -1,0 +1,35 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env.venv
+
+# HuggingFace / model cache
+.hf_cache/
+models/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data artifacts (local)
+data/raw/
+data/processed/
+*.db
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
