@@ -3,6 +3,9 @@
 Retrieval path:
 
     retrieval query → local embedding → pgvector cosine similarity → top-k chunks
+
+Returns self-describing candidate records (provenance + temporal metadata) so
+the ranking stage and the RAG trace can inspect every field without extra joins.
 """
 from __future__ import annotations
 
@@ -13,45 +16,49 @@ from app.providers.embeddings import get_embedding_provider
 from app.retrieval.temporal import TimePeriod
 
 
+def _to_vector_literal(values: list[float]) -> str:
+    # pgvector's ``vector`` type is not a native psycopg type, so bind the
+    # textual ``[1,2,3]`` form and CAST explicitly in SQL.
+    return "[" + ",".join(repr(float(v)) for v in values) + "]"
+
+
 def vector_search(
     retrieval_query: str,
     *,
     period: TimePeriod,
     top_k: int,
+    query_vector: list[float] | None = None,
 ) -> list[dict]:
-    """Return top-k chunks by cosine similarity, filtered by time period."""
-    embedder = get_embedding_provider()
-    query_vector = embedder.embed_query(retrieval_query)
+    """Return top-k candidate chunks by cosine similarity, filtered by period."""
+    if query_vector is None:
+        query_vector = get_embedding_provider().embed_query(retrieval_query)
+    qvec = _to_vector_literal(query_vector)
 
-    # pgvector's ``vector`` type is not a native psycopg type, so a bare Python
-    # list cannot be bound to the ``<=>`` operator. Serialize it to the textual
-    # ``[1,2,3]`` form and CAST explicitly.
-    qvec = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
-
-    params: dict = {
-        "qvec": qvec,
-        "top_k": top_k,
-    }
+    params: dict = {"qvec": qvec, "top_k": top_k}
     period_clause = ""
     if period.start:
-        params["t_start"] = period.start
-        period_clause += " AND (c.end_date IS NULL OR c.end_date >= :t_start)"
+        params["t_start_year"] = period.start.year
+        period_clause += " AND (c.end_year IS NULL OR c.end_year >= :t_start_year)"
     if period.end:
-        params["t_end"] = period.end
-        period_clause += " AND (c.start_date IS NULL OR c.start_date <= :t_end)"
+        params["t_end_year"] = period.end.year
+        period_clause += " AND (c.start_year IS NULL OR c.start_year <= :t_end_year)"
 
     sql = f"""
         SELECT
             c.id,
+            c.document_id,
+            c.chunk_index,
+            c.section,
+            c.source_name,
+            c.source_type,
+            c.document_title,
+            c.source_url,
+            c.published_date,
+            c.start_year,
+            c.end_year,
             c.text,
-            d.title,
-            d.source,
-            d.source_url,
-            c.start_date,
-            c.end_date,
             1 - (c.embedding <=> CAST(:qvec AS vector)) AS similarity
         FROM chunks c
-        JOIN documents d ON d.id = c.document_id
         WHERE c.embedding IS NOT NULL
           {period_clause}
         ORDER BY c.embedding <=> CAST(:qvec AS vector)
@@ -59,10 +66,7 @@ def vector_search(
     """
 
     with session_scope() as session:
-        rows = [
-            dict(row._mapping)
-            for row in session.execute(text(sql), params)
-        ]
+        rows = [dict(r._mapping) for r in session.execute(text(sql), params)]
 
     for r in rows:
         r["similarity"] = float(r["similarity"])

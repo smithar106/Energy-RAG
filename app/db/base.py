@@ -4,6 +4,8 @@ Provides:
   - ``engine``: SQLAlchemy engine bound to ``DATABASE_URL``
   - ``SessionLocal``: session factory
   - ``init_db()``: creates the pgvector extension + tables
+  - ``reset_rag_tables()``: drops and recreates ONLY the RAG tables
+    (``documents`` / ``chunks``), leaving ``price_records`` untouched
 """
 from __future__ import annotations
 
@@ -74,3 +76,21 @@ def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     models.Base.metadata.create_all(bind=engine)
+
+
+def reset_rag_tables() -> None:
+    """Drop + recreate ONLY ``documents``/``chunks``.
+
+    Used to permanently remove synthetic/placeholder RAG content and to apply
+    schema changes. ``price_records`` (real EIA data) is never touched.
+    """
+    from app.db import models
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # Child table first to satisfy the FK.
+    models.Chunk.__table__.drop(bind=engine, checkfirst=True)
+    models.Document.__table__.drop(bind=engine, checkfirst=True)
+    models.Document.__table__.create(bind=engine)
+    models.Chunk.__table__.create(bind=engine)

@@ -1,8 +1,8 @@
 """DeepSeek tool-calling loop.
 
 The agent *gathers* evidence (SQL + pgvector) by calling tools; it never
-computes a number itself. Grounded synthesis happens downstream in the
-``synthesis`` module.
+computes a number or invents a source itself. Grounded synthesis happens
+downstream in the ``synthesis`` module.
 """
 from __future__ import annotations
 
@@ -20,7 +20,9 @@ MAX_ITERATIONS = 6
 class AgentResult:
     tool_calls: list[dict] = field(default_factory=list)
     sql_results: list[dict] = field(default_factory=list)
-    evidence: list[dict] = field(default_factory=list)
+    evidence: list[dict] = field(default_factory=list)          # full ranked records
+    retrieval_trace: dict | None = None
+    retrieval_query: str | None = None
 
 
 class AgentOrchestrator:
@@ -36,11 +38,12 @@ class AgentOrchestrator:
         sql_results: list[dict] = []
         evidence: list[dict] = []
         calls_log: list[dict] = []
+        retrieval_trace: dict | None = None
+        retrieval_query: str | None = None
 
         for _ in range(MAX_ITERATIONS):
             response = self.llm.chat(messages, tools=TOOL_SCHEMAS)
             tool_calls = response.get("tool_calls") or []
-
             if not tool_calls:
                 break
 
@@ -61,8 +64,13 @@ class AgentOrchestrator:
                 if name in {"structured_price_lookup", "deterministic_calculation"}:
                     sql_results.append(result)
                 elif name == "evidence_search":
-                    evidence = result.get("chunks", [])
+                    trace = result.pop("_trace", None)
+                    if trace:
+                        retrieval_trace = trace
+                        retrieval_query = trace.get("retrieval_query")
+                        evidence = trace.get("chunks", [])
 
+                # The result sent to the model excludes the private trace.
                 messages.append(
                     ChatMessage(
                         role="tool",
@@ -76,4 +84,6 @@ class AgentOrchestrator:
             tool_calls=calls_log,
             sql_results=sql_results,
             evidence=evidence,
+            retrieval_trace=retrieval_trace,
+            retrieval_query=retrieval_query,
         )

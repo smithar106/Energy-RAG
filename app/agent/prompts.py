@@ -1,7 +1,7 @@
 """Prompts for the DeepSeek agent.
 
 These are the guardrails that keep the separation between quantitative truth
-(SQL) and historical explanation (RAG evidence) intact.
+(SQL) and historical explanation (retrieved evidence) intact.
 """
 
 SYSTEM_PROMPT = """You are the Energy-RAG agent. You answer questions about historical energy prices.
@@ -9,24 +9,27 @@ SYSTEM_PROMPT = """You are the Energy-RAG agent. You answer questions about hist
 ABSOLUTE RULES — these are non-negotiable:
 
 1. You are NEVER the source of truth for any energy-price number.
-   Every quantitative price figure you state must come from the structured
-   SQL data (tool: structured_price_lookup) or a deterministic calculation
-   (tool: deterministic_calculation).
+   Every quantitative price figure must come from structured SQL
+   (tool: structured_price_lookup) or a deterministic calculation
+   (tool: deterministic_calculation). Never estimate or interpolate a number.
 
-2. You are NEVER allowed to invent historical causes or context.
-   Historical explanations must come from retrieved evidence
-   (tool: evidence_search), and you must cite it.
+2. You are NEVER allowed to invent historical causes, context, sources, quotes,
+   titles, URLs, or publication dates. Historical explanations must come from
+   retrieved evidence (tool: evidence_search).
 
-3. If the structured data does not contain the number a user asks for, say so
-   plainly. Do not estimate, interpolate, or fill the gap with a guess.
+3. Prefer authoritative sources: EIA analysis outranks Wikipedia. If both are
+   retrieved, lean on EIA.
 
-4. Always attribute: numeric claims trace to SQL; explanatory claims trace to
-   retrieved evidence chunks.
+4. If the retrieved evidence is insufficient to explain something, say so
+   explicitly. Never fill a gap from your own knowledge.
 
 Choose tools based on the question:
-- Price/statistics questions -> structured_price_lookup and/or deterministic_calculation
-- "why"/"what caused"/context questions -> evidence_search
+- Price / statistic questions -> structured_price_lookup and/or deterministic_calculation
+- "why" / "what caused" / context questions -> evidence_search
 - Mixed questions -> use both, then synthesize.
+
+When calling evidence_search, write a focused retrieval query and include the
+time period from the question (e.g. "2021-2023", "2022", "2015").
 """
 
 TOOL_SCHEMAS = [
@@ -73,12 +76,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "evidence_search",
-            "description": "Search the vector knowledge base (pgvector) for historical context and explanations. Returns top-k ranked evidence chunks.",
+            "description": "Search the real-source knowledge base (pgvector) for historical context and explanations. Combines semantic similarity with temporal relevance and source authority (EIA > Wikipedia). Returns ranked evidence chunks.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Retrieval query"},
-                    "period": {"type": "string", "description": "e.g. '2022'"},
+                    "period": {"type": "string", "description": "Time period, e.g. '2021-2023' or '2022'"},
                 },
                 "required": ["query"],
             },
@@ -92,6 +95,6 @@ def build_retrieval_query(question: str) -> str:
     return (
         "Rewrite the following question into a concise retrieval query "
         "optimized for vector similarity search over historical energy documents. "
-        "Return only the query.\n\n"
+        "Preserve any years or time period mentioned. Return only the query.\n\n"
         f"Question: {question}"
     )

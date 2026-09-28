@@ -7,8 +7,8 @@ Two deliberately separate domains:
    never the source of a number.
 
 2. **Unstructured evidence** — ``Document`` / ``Chunk``. The *historical
-   explanation*. Chunks carry pgvector embeddings and temporal bounds so
-   retrieval can do similarity search + time-period filtering.
+   explanation*. Chunks store the pgvector embedding plus the provenance and
+   temporal metadata required for citation integrity and temporal retrieval.
 """
 from __future__ import annotations
 
@@ -51,14 +51,25 @@ class PriceRecord(Base):
 
 
 class Document(Base):
-    """A source document ingested into the knowledge base."""
+    """A real source document ingested into the knowledge base.
+
+    ``published_date`` is the *source's* publication date and is kept strictly
+    separate from the event window (``start_year`` / ``end_year``) carried on
+    chunks — publication year does not equal event year.
+    """
 
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(512))
-    source: Mapped[str] = mapped_column(String(128))        # "EIA", "wikipedia", ...
-    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_name: Mapped[str] = mapped_column(String(128))   # "Wikipedia", "U.S. EIA"
+    source_type: Mapped[str] = mapped_column(String(64))    # "Wikipedia", "EIA Analysis"
+    source_url: Mapped[str] = mapped_column(String(1024), unique=True, index=True)
+    published_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    revision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -69,7 +80,11 @@ class Document(Base):
 
 
 class Chunk(Base):
-    """A text chunk with its pgvector embedding + temporal bounds."""
+    """A real text chunk with its pgvector embedding and full provenance.
+
+    Provenance columns are denormalized onto the chunk so that every retrieved
+    record is self-describing for citation (chunks are a read-optimized store).
+    """
 
     __tablename__ = "chunks"
 
@@ -78,10 +93,20 @@ class Chunk(Base):
         ForeignKey("documents.id", ondelete="CASCADE"), index=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer)
+    section: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Provenance (denormalized for self-describing retrieval records).
+    source_name: Mapped[str] = mapped_column(String(128))
+    source_type: Mapped[str] = mapped_column(String(64))
+    document_title: Mapped[str] = mapped_column(String(512))
+    source_url: Mapped[str] = mapped_column(String(1024))
+    published_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Event window (inferred from source content, NOT the publication date).
+    start_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    end_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
     text: Mapped[str] = mapped_column(Text)
-    # 384 dims = BAAI/bge-small-en-v1.5
     embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=True)
-    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

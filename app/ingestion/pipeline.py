@@ -1,72 +1,128 @@
 """Ingestion orchestration.
 
-Document → clean → chunk → local embedding → pgvector.
+    real source → clean → section-aware chunk → local embedding → pgvector
 
-Price series → structured rows in ``price_records``.
+No text is generated or summarized here: every stored chunk is verbatim source
+content from the fetched document.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+
+from sqlalchemy import select
 
 from app.db.base import session_scope
 from app.db.models import Chunk, Document, PriceRecord
-from app.ingestion.chunker import chunk_text
-from app.ingestion.cleaner import clean_text
-from app.ingestion.eia import EIAPoint
+from app.ingestion.chunker import chunk_segments
+from app.ingestion.html import Segment, text_to_segments
+from app.ingestion.metadata import infer_year_range
+from app.ingestion.sources.base import SourceDocument
 from app.providers.embeddings import get_embedding_provider
 
 
-def ingest_document(
+def store_source_document(
+    doc: SourceDocument,
     *,
-    text: str,
-    title: str,
-    source: str,
-    source_url: str | None = None,
-    start_date: date | None = None,
-    end_date: date | None = None,
+    force: bool = False,
+    start_year: int | None = None,
+    end_year: int | None = None,
 ) -> tuple[int, int]:
-    """Clean, chunk, embed, and store a document + its chunks."""
-    cleaned = clean_text(text)
-    chunks = chunk_text(cleaned)
+    """Chunk, embed, and store a source document. Returns (document_id, chunks).
+
+    De-duplicates by ``source_url``. With ``force=True`` an existing document is
+    deleted and replaced. Explicit ``start_year``/``end_year`` override the
+    content-inferred event window.
+    """
+    chunks = chunk_segments(doc.segments)
+    if not chunks:
+        raise ValueError(f"no chunks produced for {doc.source_url}")
+
+    if start_year is None and end_year is None:
+        start_year, end_year = infer_year_range(
+            doc.full_text, published_date=doc.published_date
+        )
 
     embedder = get_embedding_provider()
     embeddings = embedder.embed_documents([c.text for c in chunks])
 
     with session_scope() as session:
-        doc = Document(
-            title=title,
-            source=source,
-            source_url=source_url,
+        existing = session.scalar(
+            select(Document).where(Document.source_url == doc.source_url)
         )
-        session.add(doc)
-        session.flush()  # assign doc.id
+        if existing is not None:
+            if not force:
+                return existing.id, 0
+            session.delete(existing)
+            session.flush()
+
+        document = Document(
+            title=doc.title,
+            source_name=doc.source_name,
+            source_type=doc.source_type,
+            source_url=doc.source_url,
+            published_date=doc.published_date,
+            revision_id=doc.revision_id,
+        )
+        session.add(document)
+        session.flush()
 
         for chunk, vector in zip(chunks, embeddings):
             session.add(
                 Chunk(
-                    document_id=doc.id,
+                    document_id=document.id,
                     chunk_index=chunk.index,
+                    section=chunk.section,
+                    source_name=doc.source_name,
+                    source_type=doc.source_type,
+                    document_title=doc.title,
+                    source_url=doc.source_url,
+                    published_date=doc.published_date,
+                    start_year=start_year,
+                    end_year=end_year,
                     text=chunk.text,
                     embedding=vector,
-                    start_date=start_date,
-                    end_date=end_date,
                 )
             )
         session.flush()
-        return doc.id, len(chunks)
+        return document.id, len(chunks)
+
+
+def store_raw_document(
+    *,
+    title: str,
+    source_name: str,
+    source_type: str,
+    source_url: str,
+    text: str,
+    published_date: date | None = None,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    section: str | None = None,
+    force: bool = False,
+) -> tuple[int, int]:
+    """Store a caller-supplied real document (API path)."""
+    doc = SourceDocument(
+        title=title,
+        source_name=source_name,
+        source_type=source_type,
+        source_url=source_url,
+        segments=text_to_segments(text, default_heading=section),
+        published_date=published_date,
+    )
+    return store_source_document(
+        doc, force=force, start_year=start_year, end_year=end_year
+    )
 
 
 def ingest_price_points(
     *,
     series_id: str,
-    points: list[EIAPoint],
+    points,
     region: str | None = None,
     fuel: str | None = None,
     source: str = "EIA",
 ) -> int:
     """Store verified EIA price points into the structured table."""
-    from datetime import datetime
-
     with session_scope() as session:
         for p in points:
             period = datetime.strptime(p.period, "%Y-%m").date()
