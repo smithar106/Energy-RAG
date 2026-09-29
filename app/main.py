@@ -12,17 +12,19 @@ pipeline is::
 """
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 import re
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
-from sqlalchemy import func, select
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from sqlalchemy import func, select, text
 
 from app.agent.orchestrator import AgentOrchestrator
 from app.config import get_settings
-from app.db.base import init_db, reset_rag_tables, session_scope
+from app.db.base import get_engine, init_db, reset_rag_tables, session_scope
 from app.db.models import Chunk, Document, PriceRecord
 from app.ingestion.eia import EIAClient
 from app.ingestion.pipeline import ingest_price_points, store_raw_document, store_source_document
@@ -34,6 +36,7 @@ from app.retrieval.ranking import apply_diversity
 from app.retrieval.service import make_retrieval_query, retrieve
 from app.retrieval.sql import default_series_id
 from app.retrieval.temporal import TimePeriod, parse_time_period
+from app.security import rate_limit, require_admin
 from app.schemas.api import (
     AskRequest,
     AskResponse,
@@ -52,6 +55,12 @@ from app.synthesis.citations import build_citations
 from app.synthesis.grounding import validate_grounding
 from app.synthesis.synthesizer import Synthesizer
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("energy_rag")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,10 +68,29 @@ async def lifespan(app: FastAPI):
     if settings.database_url:
         init_db()
     get_embedding_provider()  # warm once
+    logger.info("startup complete (embedding model warm)")
     yield
 
 
-app = FastAPI(title="Energy-RAG", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Energy-RAG", version="0.3.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _log_requests(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "%s %s -> %s (%.0fms)",
+        request.method, request.url.path, response.status_code, duration_ms,
+    )
+    return response
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
 # ── Web UI ─────────────────────────────────────────────────────────────────
@@ -88,6 +116,22 @@ def health() -> dict:
         "llm_provider": "deepseek",
         "llm_model": settings.deepseek_model,
     }
+
+
+@app.get("/ready")
+def ready() -> dict:
+    """Readiness probe: DB reachable + embedding model loaded."""
+    settings = get_settings()
+    db_ok = True
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    if not db_ok:
+        return JSONResponse(status_code=503, content={"status": "not ready", "db": False})
+    model = settings.embedding_model
+    return {"status": "ready", "db": True, "embedding_model": model}
 
 
 # ── Ask ────────────────────────────────────────────────────────────────────
@@ -199,7 +243,7 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
     )
 
 
-@app.post("/ask", response_model=AskResponse)
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(rate_limit)])
 def ask(req: AskRequest) -> AskResponse:
     question = req.question.strip()
     if not question:
@@ -235,7 +279,7 @@ def ask(req: AskRequest) -> AskResponse:
     )
 
 
-@app.post("/debug/retrieval", response_model=RetrieveResponse)
+@app.post("/debug/retrieval", response_model=RetrieveResponse, dependencies=[Depends(rate_limit)])
 def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
     settings = get_settings()
     if req.time_period_start or req.time_period_end:
@@ -289,7 +333,7 @@ def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
 
 
 # ── Ingestion ──────────────────────────────────────────────────────────────
-@app.post("/ingest/eia", response_model=IngestEIAResponse)
+@app.post("/ingest/eia", response_model=IngestEIAResponse, dependencies=[Depends(require_admin)])
 def ingest_eia(
     series_id: str,
     length: int = 5000,
@@ -305,7 +349,7 @@ def ingest_eia(
     )
 
 
-@app.post("/ingest", response_model=IngestResponse)
+@app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(require_admin)])
 def ingest(req: IngestRequest) -> IngestResponse:
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
@@ -329,7 +373,7 @@ def ingest(req: IngestRequest) -> IngestResponse:
     )
 
 
-@app.post("/admin/ingest/eia", response_model=list[IngestSourceResponse])
+@app.post("/admin/ingest/eia", response_model=list[IngestSourceResponse], dependencies=[Depends(require_admin)])
 def admin_ingest_eia(
     offset: int = 0, limit: int = 1, force: bool = False
 ) -> list[IngestSourceResponse]:
@@ -359,7 +403,7 @@ def admin_ingest_eia(
     return results
 
 
-@app.post("/admin/ingest/eia-archive", response_model=list[IngestSourceResponse])
+@app.post("/admin/ingest/eia-archive", response_model=list[IngestSourceResponse], dependencies=[Depends(require_admin)])
 def admin_ingest_eia_archive(
     offset: int = 0, limit: int = 1, force: bool = False
 ) -> list[IngestSourceResponse]:
@@ -389,7 +433,7 @@ def admin_ingest_eia_archive(
     return results
 
 
-@app.post("/admin/ingest/eia-explained", response_model=list[IngestSourceResponse])
+@app.post("/admin/ingest/eia-explained", response_model=list[IngestSourceResponse], dependencies=[Depends(require_admin)])
 def admin_ingest_eia_explained(force: bool = False) -> list[IngestSourceResponse]:
     results: list[IngestSourceResponse] = []
     for url, title in eia_explained.EXPLAINED_PAGES:
@@ -409,7 +453,7 @@ def admin_ingest_eia_explained(force: bool = False) -> list[IngestSourceResponse
     return results
 
 
-@app.post("/admin/ingest/wikipedia", response_model=IngestSourceResponse)
+@app.post("/admin/ingest/wikipedia", response_model=IngestSourceResponse, dependencies=[Depends(require_admin)])
 def admin_ingest_wikipedia(title: str, force: bool = False) -> IngestSourceResponse:
     doc = wikipedia.fetch_article(title)
     if doc is None:
@@ -424,13 +468,13 @@ def admin_ingest_wikipedia(title: str, force: bool = False) -> IngestSourceRespo
     )
 
 
-@app.post("/admin/reset-rag", response_model=ResetResponse)
+@app.post("/admin/reset-rag", response_model=ResetResponse, dependencies=[Depends(require_admin)])
 def admin_reset_rag() -> ResetResponse:
     reset_rag_tables()
     return ResetResponse(dropped=["chunks", "documents"], recreated=["documents", "chunks"])
 
 
-@app.post("/admin/backfill")
+@app.post("/admin/backfill", dependencies=[Depends(require_admin)])
 def admin_backfill() -> dict:
     """Populate energy-domain + temporal metadata for existing chunks (document-level)."""
     from app.ingestion.pipeline import compute_document_metadata
@@ -456,7 +500,7 @@ def admin_backfill() -> dict:
     return {"backfilled_chunks": updated}
 
 
-@app.get("/admin/coverage")
+@app.get("/admin/coverage", dependencies=[Depends(require_admin)])
 def admin_coverage() -> dict:
     """Yearly + energy-domain coverage for the audit script."""
     with session_scope() as session:
@@ -498,7 +542,7 @@ def admin_coverage() -> dict:
     }
 
 
-@app.get("/admin/stats")
+@app.get("/admin/stats", dependencies=[Depends(require_admin)])
 def admin_stats() -> dict:
     with session_scope() as session:
         n_docs = session.scalar(select(func.count()).select_from(Document)) or 0

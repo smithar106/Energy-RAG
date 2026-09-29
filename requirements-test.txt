@@ -1,0 +1,13 @@
+# Test-only dependencies (no torch / sentence-transformers — keeps CI fast).
+pytest
+fastapi
+sqlalchemy
+psycopg[binary]
+pgvector
+pydantic
+pydantic-settings
+httpx
+openai
+beautifulsoup4
+lxml
+python-dotenv

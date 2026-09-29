@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Model cache location (baked into the image on Railway).
     hf_home: str = "/app/.hf_cache"
 
+    # Security / resilience.
+    admin_api_key: str = ""        # guards /admin/* (fail-closed when empty)
+    rate_limit_max: int = 20       # max /ask requests per window per IP (0 = off)
+    rate_limit_window: int = 60    # window length in seconds
+
     # Retrieval knobs.
     retrieval_top_k: int = 40   # pgvector candidate pool before ranking (stage 1)
     rerank_top_n: int = 5       # accepted evidence passed to synthesis (stage 2)
