@@ -40,16 +40,24 @@ _REFUSAL_RE = re.compile(
 _PCT_TOL = 0.06
 
 
-def _price_like_numbers(window: str) -> list[float]:
-    """Numbers in a text window that are not 4-digit years."""
-    nums: list[float] = []
-    for m in re.finditer(r"\d+(?:\.\d+)?", window):
-        token = m.group(0)
-        value = float(token)
-        if "." not in token and 1900 <= value <= 2100:
-            continue  # a year, not a price
-        nums.append(value)
-    return nums
+def _is_year(value: float) -> bool:
+    return value == int(value) and 1900 <= value <= 2100
+
+
+_ARROW_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:→|->|—|–)\s*(\d+(?:\.\d+)?)")
+_FROMTO_RE = re.compile(r"\bfrom\s+(\d+(?:\.\d+)?)\b[^0-9]{0,30}?\bto\s+(\d+(?:\.\d+)?)")
+
+
+def _transition_pairs(window: str) -> list[tuple[float, float]]:
+    """Explicit price transitions (A→B / from A to B) in the window."""
+    pairs: list[tuple[float, float]] = []
+    for rx in (_ARROW_RE, _FROMTO_RE):
+        for m in rx.finditer(window):
+            a, b = float(m.group(1)), float(m.group(2))
+            if _is_year(a) or _is_year(b) or a == 0:
+                continue
+            pairs.append((a, b))
+    return pairs
 
 
 def _collect_price_changes(sql_results: list[dict]) -> list[dict]:
@@ -127,18 +135,17 @@ def _verify_percentage_claims(
 
     for m in _PCT_RE.finditer(answer or ""):
         claimed = float(m.group(1))
-        window = answer[max(0, m.start() - 180): m.end() + 60]
+        window = answer[max(0, m.start() - 60): m.end() + 30]
 
-        prices = _price_like_numbers(window)
-        pairs = [(prices[i], prices[j]) for i in range(len(prices)) for j in range(i + 1, len(prices)) if prices[i] > 0]
+        pairs = _transition_pairs(window)
         if pairs:
-            # The claim references observation values → recompute from them.
+            # The claim states an explicit price transition → recompute from it.
             ok = any(abs(((b - a) / a * 100.0) - claimed) <= _PCT_TOL for a, b in pairs)
             if not ok:
                 ungrounded.append(f"percent: {m.group(0).strip()} (inconsistent with the cited prices)")
             continue
 
-        # No pair to recompute from → accept if it matches a change or evidence.
+        # No explicit transition → accept if it matches a change or evidence %.
         if any(abs(claimed - p) <= _PCT_TOL for p in change_pcts):
             continue
         if any(abs(claimed - p) <= _PCT_TOL for p in evidence_pcts):

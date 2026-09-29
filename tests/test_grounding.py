@@ -27,8 +27,8 @@ def _sql_2017() -> list[dict]:
 
 def test_2017_percentage_from_same_pair_passes():
     answer = (
-        "The largest monthly increase was May 2017 (10.34 cents/kWh) to "
-        "June 2017 (10.83 cents/kWh): +0.49 cents/kWh, +4.74%."
+        "The largest monthly increase went from 10.34 cents/kWh to 10.83 cents/kWh: "
+        "+0.49 cents/kWh, +4.74%."
     )
     check = validate_grounding(answer, _sql_2017(), [], llm_check=False)
     assert check.valid is True
@@ -38,8 +38,8 @@ def test_2017_percentage_from_same_pair_passes():
 def test_2017_mixing_pairs_fails():
     # The production bug: May→Jun absolute paired with the Jan→Dec percent.
     answer = (
-        "The largest monthly increase was May 2017 (10.34 cents/kWh) to "
-        "June 2017 (10.83 cents/kWh): +0.49 cents/kWh, +0.39%."
+        "The largest monthly increase went from 10.34 cents/kWh to 10.83 cents/kWh: "
+        "+0.49 cents/kWh, +0.39%."
     )
     check = validate_grounding(answer, _sql_2017(), [], llm_check=False)
     assert check.valid is False
@@ -78,4 +78,18 @@ def test_refusal_answer_is_not_flagged():
     assert check.sufficient_evidence is False
     # A refusal must not be flagged as an ungrounded explanatory claim.
     assert not any(u.startswith("explanatory") for u in check.ungrounded)
+    assert check.valid is True
+
+
+def test_evidence_percentages_are_not_price_changes():
+    # Percentages that come from evidence (e.g. "37% higher year-over-year")
+    # must not be treated as price-change percentages to recompute.
+    sql = _sql_2017()
+    evidence = [{"text": "natural gas prices averaged $3.53, 37% higher than a year earlier, while coal fell 2%"}]
+    answer = (
+        "The largest increase went from 10.34 to 10.83 cents/kWh (+4.74%). "
+        "Higher natural gas costs, 37% above a year earlier, drove prices [0]."
+    )
+    check = validate_grounding(answer, sql, evidence, llm_check=False)
+    assert not any(u.startswith("percent:") for u in check.ungrounded)
     assert check.valid is True
