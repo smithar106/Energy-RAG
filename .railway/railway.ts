@@ -8,7 +8,6 @@ export default defineRailway(() => {
     source: github("smithar106/Energy-RAG", { checkSuites: false }),
     builder: "DOCKERFILE",
     dockerfilePath: "Dockerfile",
-    start: "uvicorn app.main:app --host 0.0.0.0 --port $PORT",
     healthcheck: "/health",
     healthcheckTimeout: 120,
     replicas: { "us-west2": 1 },
