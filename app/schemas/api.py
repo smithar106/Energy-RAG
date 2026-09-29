@@ -97,6 +97,8 @@ class RAGTrace(BaseModel):
     gate_passed: int = 0          # passed the deterministic evidence gate
     causally_useful: int = 0      # passed the causal-usefulness filter
     evidence_supplied: int = 0    # final evidence sent to DeepSeek
+    discovery_used: bool = False  # query-time source discovery ran
+    discovered_docs: int = 0      # real EIA docs fetched + ingested by discovery
     top_n: int = 0
     ranking_weights: dict = Field(default_factory=dict)
     ranking_formula: str = ""

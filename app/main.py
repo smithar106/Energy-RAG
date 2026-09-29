@@ -31,6 +31,7 @@ from app.ingestion.pipeline import ingest_price_points, store_raw_document, stor
 from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
 from app.retrieval.changes import endpoint_change, largest_changes
+from app.retrieval.discovery import discover_eia_documents
 from app.retrieval.intent import parse_intent
 from app.retrieval.ranking import apply_diversity
 from app.retrieval.service import make_retrieval_query, retrieve
@@ -182,6 +183,39 @@ def _deterministic_sql_phase(question: str, sql_results: list[dict]) -> None:
             )
 
 
+def _result_to_trace_dict(result, period) -> dict:
+    """Build a retrieval-trace dict (same shape as the agent's evidence tool)."""
+    intent = result.intent
+    return {
+        "intent": {
+            "energy_type": intent.energy_type,
+            "market_layer": intent.market_layer,
+            "geography": intent.geography,
+            "sector": intent.sector,
+            "event_start": intent.event_start.isoformat() if intent.event_start else None,
+            "event_end": intent.event_end.isoformat() if intent.event_end else None,
+            "context_start": intent.context_start.isoformat() if intent.context_start else None,
+            "context_end": intent.context_end.isoformat() if intent.context_end else None,
+            "is_causal": intent.is_causal,
+        },
+        "requested_period": {
+            "start": period.start.isoformat() if period.start else None,
+            "end": period.end.isoformat() if period.end else None,
+        },
+        "queries": result.queries,
+        "query_embedding": result.query_embedding,
+        "embedding_dim": len(result.query_embedding),
+        "vector_count": result.vector_count,
+        "lexical_count": result.lexical_count,
+        "candidate_count": result.candidate_count,
+        "gate_passed": len(result.ranked),
+        "top_n": result.top_n,
+        "weights": result.weights,
+        "formula": result.formula,
+        "chunks": result.ranked_all,
+    }
+
+
 def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
     t = agent_result.retrieval_trace
     if not t:
@@ -268,6 +302,31 @@ def ask(req: AskRequest) -> AskResponse:
     causally_useful = filter_causally_useful(question, gate_passed[:30]) if intent.is_causal else gate_passed
     evidence = apply_diversity(causally_useful, settings.rerank_top_n)
 
+    # Phase 3: query-time authoritative source discovery (Fix 6 fallback).
+    discovered_docs = 0
+    discovery_used = False
+    if not evidence and intent.is_causal and intent.event_start and settings.discovery_enabled:
+        discovery_used = True
+        for doc in discover_eia_documents(question, intent):
+            try:
+                store_source_document(doc)
+                discovered_docs += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("discovery skip %s: %s", doc.source_url, exc)
+        if discovered_docs:
+            semantic_query = agent_result.retrieval_query or make_retrieval_query(question)
+            period = parse_time_period(question)
+            result = retrieve(
+                question=question,
+                semantic_query=semantic_query,
+                sql_results=agent_result.sql_results,
+                period=period,
+            )
+            new_gate_passed = result.ranked
+            new_causal = filter_causally_useful(question, new_gate_passed[:30])
+            evidence = apply_diversity(new_causal, settings.rerank_top_n)
+            agent_result.retrieval_trace = _result_to_trace_dict(result, period)
+
     answer = Synthesizer().synthesize(question, agent_result.sql_results, evidence)
     grounding = validate_grounding(answer, agent_result.sql_results, evidence)
     citations = build_citations(evidence)
@@ -277,8 +336,10 @@ def ask(req: AskRequest) -> AskResponse:
         final_ids = {c["id"] for c in evidence}
         for c in trace.chunks:
             c.passed_to_llm = c.chunk_id in final_ids
-        trace.causally_useful = len(causally_useful)
+        trace.causally_useful = len(causally_useful) if not discovery_used else len(new_causal)
         trace.evidence_supplied = len(evidence)
+        trace.discovery_used = discovery_used
+        trace.discovered_docs = discovered_docs
     return AskResponse(
         answer=answer,
         citations=citations,

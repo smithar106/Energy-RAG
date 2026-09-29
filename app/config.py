@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     rate_limit_max: int = 20       # max /ask requests per window per IP (0 = off)
     rate_limit_window: int = 60    # window length in seconds
 
+    # Query-time authoritative source discovery (fallback when KB is insufficient).
+    discovery_enabled: bool = True
+    discovery_max_docs: int = 8    # max EIA docs fetched + ingested per query
+
     # Retrieval knobs.
     retrieval_top_k: int = 40   # pgvector candidate pool before ranking (stage 1)
     rerank_top_n: int = 5       # accepted evidence passed to synthesis (stage 2)
