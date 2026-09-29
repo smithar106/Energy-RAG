@@ -201,16 +201,21 @@ def rank_chunks(
 
 
 def _chunk_window(chunk: dict) -> tuple[date | None, date | None]:
-    es = chunk.get("event_start_date")
-    ee = chunk.get("event_end_date")
-    if isinstance(es, str):
-        es = date.fromisoformat(es)
-    if isinstance(ee, str):
-        ee = date.fromisoformat(ee)
-    if es is None and chunk.get("start_year"):
+    """Year-level event window (robust) with month-level fallback."""
+    es = None
+    ee = None
+    if chunk.get("start_year"):
         es = date(int(chunk["start_year"]), 1, 1)
-    if ee is None and chunk.get("end_year"):
+    if chunk.get("end_year"):
         ee = date(int(chunk["end_year"]), 12, 31)
+    if es is None and chunk.get("event_start_date"):
+        es = chunk["event_start_date"]
+        if isinstance(es, str):
+            es = date.fromisoformat(es)
+    if ee is None and chunk.get("event_end_date"):
+        ee = chunk["event_end_date"]
+        if isinstance(ee, str):
+            ee = date.fromisoformat(ee)
     return es, ee
 
 
