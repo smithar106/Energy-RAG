@@ -33,3 +33,6 @@ data/processed/
 .DS_Store
 .idea/
 .vscode/
+
+# Node (Railway IaC SDK)
+node_modules/
