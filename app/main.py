@@ -445,6 +445,36 @@ def admin_ingest_eia_archive(
     return results
 
 
+@app.post("/admin/ingest/eia-archive-year", response_model=list[IngestSourceResponse], dependencies=[Depends(require_admin)])
+def admin_ingest_eia_archive_year(
+    year: int, offset: int = 0, limit: int = 1, force: bool = False
+) -> list[IngestSourceResponse]:
+    items = eia_articles.list_archive_by_year(year)[offset : offset + limit]
+    results: list[IngestSourceResponse] = []
+    for item in items:
+        try:
+            doc = eia_articles.fetch_article(
+                item.url, title=item.title, published_date=item.published_date
+            )
+            if doc is None:
+                continue
+            doc_id, n = store_source_document(doc, force=force)
+        except Exception as exc:  # noqa: BLE001
+            print(f"skip {item.url}: {exc}")
+            continue
+        results.append(
+            IngestSourceResponse(
+                title=doc.title,
+                source_name=doc.source_name,
+                source_url=doc.source_url,
+                document_id=doc_id,
+                chunks=n,
+                published_date=doc.published_date,
+            )
+        )
+    return results
+
+
 @app.post("/admin/ingest/eia-explained", response_model=list[IngestSourceResponse], dependencies=[Depends(require_admin)])
 def admin_ingest_eia_explained(force: bool = False) -> list[IngestSourceResponse]:
     results: list[IngestSourceResponse] = []

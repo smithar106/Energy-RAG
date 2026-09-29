@@ -153,14 +153,9 @@ def _parse_long_date(value: str) -> date | None:
         return None
 
 
-def list_archive_articles(*, limit: int = 400) -> list[EIAItem]:
-    """Discover historical Today in Energy articles from the archive page.
-
-    Each list item carries its date and title, so older analysis (back to the
-    start of the Today in Energy archive) can be ingested, not just the RSS.
-    """
+def _list_archive(url: str, *, limit: int = 400) -> list[EIAItem]:
     resp = httpx.get(
-        ARCHIVE_URL, headers={"User-Agent": USER_AGENT}, timeout=30.0, follow_redirects=True
+        url, headers={"User-Agent": USER_AGENT}, timeout=30.0, follow_redirects=True
     )
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "lxml")
@@ -170,8 +165,8 @@ def list_archive_articles(*, limit: int = 400) -> list[EIAItem]:
     for anchor in soup.find_all("a", href=True):
         if not _valid_link(anchor["href"]):
             continue
-        url = urljoin(ARCHIVE_URL, anchor["href"])
-        if url in seen:
+        full_url = urljoin(ARCHIVE_URL, anchor["href"])
+        if full_url in seen:
             continue
         title = clean_inline(anchor.get_text(" ", strip=True))
         published = None
@@ -181,8 +176,18 @@ def list_archive_articles(*, limit: int = 400) -> list[EIAItem]:
             if m:
                 published = _parse_long_date(m.group(1))
         if title and published:
-            seen.add(url)
-            items.append(EIAItem(title=title, url=url, published_date=published, description=""))
+            seen.add(full_url)
+            items.append(EIAItem(title=title, url=full_url, published_date=published, description=""))
         if len(items) >= limit:
             break
     return items
+
+
+def list_archive_articles(*, limit: int = 400) -> list[EIAItem]:
+    """Discover recent Today in Energy articles from the archive landing page."""
+    return _list_archive(ARCHIVE_URL, limit=limit)
+
+
+def list_archive_by_year(year: int, *, limit: int = 400) -> list[EIAItem]:
+    """Discover Today in Energy articles for a specific year (2011–present)."""
+    return _list_archive(f"{ARCHIVE_URL}?my={year}", limit=limit)
