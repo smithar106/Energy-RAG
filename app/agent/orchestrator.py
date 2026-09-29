@@ -29,13 +29,13 @@ class AgentOrchestrator:
     def __init__(self) -> None:
         self.llm = get_llm_provider()
 
-    def run(self, question: str) -> AgentResult:
+    def run(self, question: str, initial_sql_results: list[dict] | None = None) -> AgentResult:
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=SYSTEM_PROMPT),
             ChatMessage(role="user", content=question),
         ]
 
-        sql_results: list[dict] = []
+        sql_results: list[dict] = list(initial_sql_results or [])
         evidence: list[dict] = []
         calls_log: list[dict] = []
         retrieval_trace: dict | None = None
@@ -68,8 +68,8 @@ class AgentOrchestrator:
                     if trace:
                         retrieval_trace = trace
                         retrieval_query = trace.get("retrieval_query")
-                        # Only accepted evidence is passed to synthesis.
-                        evidence = [c for c in trace.get("chunks", []) if c.get("accepted")]
+                        # Only gate-passed evidence is passed to the causal filter.
+                        evidence = [c for c in trace.get("chunks", []) if c.get("gate_passed")]
 
                 # The result sent to the model excludes the private trace.
                 messages.append(

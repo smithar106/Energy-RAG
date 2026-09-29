@@ -54,3 +54,21 @@ def test_query_expansion_multiple_and_data_aware():
     assert len(queries) >= 4
     assert any("2017" in q for q in queries)
     assert any("generation" in q for q in queries)
+
+
+def test_event_drives_queries_not_january():
+    sql = [{
+        "changes": [{
+            "series_id": "ELEC.PRICE.US-ALL.M",
+            "previous_period": "2017-05-01", "current_period": "2017-06-01",
+        }]
+    }]
+    intent = parse_intent("What caused the biggest increase in US electricity prices in 2017?", sql)
+    assert intent.event_start == date(2017, 5, 1)
+    assert intent.event_end == date(2017, 6, 1)
+    # ±3 month context window, distinct from the exact event.
+    assert intent.context_start == date(2017, 2, 1)
+    assert intent.context_end == date(2017, 9, 30)
+    joined = " ".join(build_retrieval_queries("US electricity price increase", intent)).lower()
+    assert "may" in joined and "june" in joined
+    assert "january" not in joined

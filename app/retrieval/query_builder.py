@@ -24,9 +24,13 @@ ELECTRICITY_CONCEPTS = (
 
 def _event_label(intent: RetrievalIntent) -> str | None:
     if intent.event_start and intent.event_end:
+        sm = _MONTHS[intent.event_start.month]
+        em = _MONTHS[intent.event_end.month]
         if intent.event_start.year == intent.event_end.year:
-            return f"{_MONTHS[intent.event_start.month]} {intent.event_start.year}"
-        return f"{intent.event_start.year} to {intent.event_end.year}"
+            if sm == em:
+                return f"{sm} {intent.event_start.year}"
+            return f"{sm} {em} {intent.event_start.year}"
+        return f"{sm} {intent.event_start.year} to {em} {intent.event_end.year}"
     return None
 
 
@@ -40,7 +44,7 @@ def build_retrieval_queries(
         queries.append(semantic_query.strip())
 
     energy = intent.energy_type or "energy"
-    metric = intent.market_layer or "price"
+    metric = (intent.market_layer or "price").replace("_", " ")
     geo = intent.geography or ""
     year = intent.event_start.year if intent.event_start else None
     event = _event_label(intent)

@@ -127,9 +127,9 @@ def retrieve(
     # final diversity + causal filtering happen downstream in the ask flow.
     passed, rejected = gate_chunks(ranked_all, intent=intent)
     for c in passed:
-        c["accepted"] = True
+        c["gate_passed"] = True
     for c in rejected:
-        c["accepted"] = False
+        c["gate_passed"] = False
 
     combined = passed + rejected
     combined.sort(key=lambda r: r["final_score"], reverse=True)

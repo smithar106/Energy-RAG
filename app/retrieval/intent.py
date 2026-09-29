@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from app.retrieval.series import series_meta
 from app.retrieval.temporal import parse_time_period
@@ -17,6 +17,16 @@ _CAUSAL_RE = re.compile(
     r"because|what made)\b",
     re.I,
 )
+
+# Context window around the identified event (months before/after).
+CONTEXT_MONTHS = 3
+
+
+def _add_months(d: date, months: int) -> date:
+    idx = d.year * 12 + (d.month - 1) + months
+    year, month = divmod(idx, 12)
+    return date(year, month + 1, 1)
+
 
 @dataclass
 class RetrievalIntent:
@@ -32,13 +42,13 @@ class RetrievalIntent:
     def context_start(self) -> date | None:
         if self.event_start is None:
             return None
-        return date(self.event_start.year - 1, 1, 1)
+        return _add_months(self.event_start, -CONTEXT_MONTHS)
 
     @property
     def context_end(self) -> date | None:
         if self.event_end is None:
             return None
-        return date(self.event_end.year + 1, 12, 31)
+        return _add_months(self.event_end, CONTEXT_MONTHS + 1) - timedelta(days=1)
 
 
 def _metric_to_layer(metric: str | None) -> str | None:
@@ -80,13 +90,25 @@ def _series_from_sql(sql_results: list[dict]) -> str | None:
 
 
 def _event_from_sql(sql_results: list[dict]) -> tuple[date | None, date | None]:
-    """The specific event window (e.g. the largest change's May→June pair)."""
+    """The specific event window.
+
+    Prefers the largest-change pair (May→June 2017), then falls back to the
+    period_end_to_end change, so a "biggest increase" question targets the
+    specific movement while a "rise between X and Y" question targets the span.
+    """
     for res in sql_results or []:
         changes = res.get("changes") or []
         if changes:
             c = changes[0]
             start = _parse_date(c.get("previous_period"))
             end = _parse_date(c.get("current_period"))
+            if start and end:
+                return start, end
+    for res in sql_results or []:
+        pc = res.get("price_change")
+        if isinstance(pc, dict):
+            start = _parse_date(pc.get("previous_period"))
+            end = _parse_date(pc.get("current_period"))
             if start and end:
                 return start, end
     return None, None

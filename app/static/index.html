@@ -262,15 +262,15 @@ function renderInspector(t, g){
   const i = t.intent || {};
   const kv = `<div class="kv">
       <div class="k">intent</div><div class="v">${esc(i.energy_type||"—")} · ${esc(i.market_layer||"—")} · ${esc(i.geography||"—")} · ${esc(i.sector||"—")} · ${i.is_causal ? "causal" : "factual"}</div>
-      <div class="k">event period</div><div class="v">${i.event_start||"—"} → ${i.event_end||"—"}</div>
+      <div class="k">event period</div><div class="v">${i.event_start||"—"} → ${i.event_end||"—"}  (context ${i.context_start||"—"} → ${i.context_end||"—"})</div>
       <div class="k">queries</div><div class="v">${(t.queries||[]).map(esc).join("  ‖  ")}</div>
-      <div class="k">candidates</div><div class="v">vector ${t.vector_count} + lexical ${t.lexical_count} → merged ${t.candidate_count} → accepted ${t.accepted_count}</div>
+      <div class="k">stages</div><div class="v">vector ${t.vector_count} · lexical ${t.lexical_count} · retrieved ${t.candidate_count} · gate-passed ${t.gate_passed} · causally useful ${t.causally_useful ?? 0} · supplied to LLM ${t.evidence_supplied ?? 0}</div>
       <div class="k">ranking</div><div class="v">${esc(t.ranking_formula)}</div>
     </div>`;
   const chunks = (t.chunks||[]).map(c => `
-    <div class="chunk ${c.accepted?'':'rej'}">
+    <div class="chunk ${c.passed_to_llm?'':'rej'}">
       <div class="top"><span class="rank">#${c.rank} · final ${c.final_score}</span>
-        <span class="pass ${c.gate==='PASS'?'':'no'}">${c.gate==='PASS' ? (c.accepted?'accepted → LLM':'passed gate') : 'FAIL · ' + esc(c.failure_reason||'')}</span></div>
+        <span class="pass ${c.gate==='PASS'?'':'no'}">${c.gate==='PASS' ? (c.passed_to_llm?'supplied to LLM':'passed gate') : 'FAIL · ' + esc(c.failure_reason||'')}</span></div>
       <div class="scores">
         ${chip("sem",c.semantic_similarity)}${chip("lex",c.lexical_score)}${chip("tmp",c.temporal_score)}${chip("dom",c.domain_score)}${chip("met",c.metric_score)}${chip("geo",c.geography_score)}${chip("auth",c.authority_score)}
       </div>
@@ -281,7 +281,7 @@ function renderInspector(t, g){
       <div class="txt">${esc(c.text)}</div>
       <span class="more">show full chunk</span>
     </div>`).join("");
-  return `<details class="insp" open><summary>Inspect retrieval (${t.candidate_count} candidates → ${t.accepted_count} accepted)</summary>
+  return `<details class="insp" open><summary>Inspect retrieval (${t.candidate_count} retrieved → ${t.evidence_supplied ?? 0} supplied to LLM)</summary>
     <div class="body">${kv}${chunks}${renderGrounding(g)}</div></details>`;
 }
 function chip(l,v){ const n=Number(v)||0; return `<span class="score"><b>${l}</b>${n.toFixed(2)}</span>`; }

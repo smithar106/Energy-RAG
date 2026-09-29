@@ -79,7 +79,6 @@ class ChunkTrace(BaseModel):
     failure_reason: str | None = None
     from_vector: bool = False
     from_lexical: bool = False
-    accepted: bool = False
     passed_to_llm: bool = False
     text: str
 
@@ -94,8 +93,10 @@ class RAGTrace(BaseModel):
     query_embedding: list[float] = Field(default_factory=list)
     vector_count: int = 0
     lexical_count: int = 0
-    candidate_count: int = 0
-    accepted_count: int = 0
+    candidate_count: int = 0      # retrieved (merged) candidates
+    gate_passed: int = 0          # passed the deterministic evidence gate
+    causally_useful: int = 0      # passed the causal-usefulness filter
+    evidence_supplied: int = 0    # final evidence sent to DeepSeek
     top_n: int = 0
     ranking_weights: dict = Field(default_factory=dict)
     ranking_formula: str = ""

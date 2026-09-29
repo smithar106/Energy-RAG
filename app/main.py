@@ -30,7 +30,7 @@ from app.ingestion.eia import EIAClient
 from app.ingestion.pipeline import ingest_price_points, store_raw_document, store_source_document
 from app.ingestion.sources import eia_articles, eia_explained, wikipedia
 from app.providers.embeddings import get_embedding_provider
-from app.retrieval.changes import largest_changes
+from app.retrieval.changes import endpoint_change, largest_changes
 from app.retrieval.intent import parse_intent
 from app.retrieval.ranking import apply_diversity
 from app.retrieval.service import make_retrieval_query, retrieve
@@ -135,44 +135,50 @@ def ready() -> dict:
 
 
 # ── Ask ────────────────────────────────────────────────────────────────────
-_CHANGE_HINT_RE = re.compile(
-    r"\b(biggest|largest|most|greatest|steepest|highest|maximum|"
-    r"increase|rise|rose|jump|surge|gain|decrease|drop|fall|decline|"
+_BIGGEST_RE = re.compile(
+    r"\b(biggest|largest|most|greatest|steepest|highest|maximum)\b", re.I
+)
+_MOVEMENT_RE = re.compile(
+    r"\b(increase|rise|rose|jump|surge|gain|decrease|drop|fall|decline|"
     r"change|grew|grow|climbed|climb|movement)\b",
     re.I,
 )
 _DECREASE_RE = re.compile(r"\b(decrease|drop|fall|decline|loss|lowest|minimum)\b", re.I)
 
 
-def _supplement_largest_change(question: str, sql_results: list[dict]) -> None:
-    """Deterministically compute the largest change when the question asks for it.
+def _deterministic_sql_phase(question: str, sql_results: list[dict]) -> None:
+    """Identify the event deterministically BEFORE retrieval.
 
-    Guarantees the LAG()-based observation pair is present even if the model
-    forgot to call ``find_largest_change``, so the answer is grounded in SQL.
+    - "biggest/largest ..."  → largest month-over-month change (the movement)
+    - other movement wording → period_end_to_end change (the span)
+
+    This makes the SQL-identified event drive the retrieval intent (May→June
+    2017, not the whole year), and grounds the answer's numbers in SQL.
     """
-    if not _CHANGE_HINT_RE.search(question):
-        return
-    for res in sql_results:
-        if "changes" in res:
-            return  # already computed by the agent
-
-    direction = "decrease" if _DECREASE_RE.search(question) else "increase"
-    period = parse_time_period(question)
     series_id = default_series_id()
+    period = parse_time_period(question)
     if not series_id or not period.is_bounded:
         return
 
-    for metric in ("percent", "absolute"):
-        changes = largest_changes(series_id, period, metric=metric, direction=direction)
-        if changes:
+    if _BIGGEST_RE.search(question):
+        direction = "decrease" if _DECREASE_RE.search(question) else "increase"
+        for metric in ("percent", "absolute"):
+            changes = largest_changes(series_id, period, metric=metric, direction=direction)
+            if changes:
+                sql_results.append(
+                    {
+                        "series_id": series_id,
+                        "metric": metric,
+                        "direction": direction,
+                        "interpretation": f"largest month-over-month {metric} {direction}",
+                        "changes": [c.to_dict() for c in changes],
+                    }
+                )
+    elif _MOVEMENT_RE.search(question):
+        change = endpoint_change(series_id, period)
+        if change is not None:
             sql_results.append(
-                {
-                    "series_id": series_id,
-                    "metric": metric,
-                    "direction": direction,
-                    "interpretation": f"largest month-over-month {metric} {direction}",
-                    "changes": [c.to_dict() for c in changes],
-                }
+                {"operation": "period_end_to_end", "price_change": change.to_dict()}
             )
 
 
@@ -219,8 +225,7 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
                 failure_reason=c.get("failure_reason"),
                 from_vector=bool(c.get("from_vector")),
                 from_lexical=bool(c.get("from_lexical")),
-                accepted=bool(c.get("accepted")),
-                passed_to_llm=bool(c.get("accepted")),
+                passed_to_llm=bool(c.get("gate_passed")),
                 text=c.get("text", ""),
             )
         )
@@ -235,7 +240,7 @@ def _build_trace(question: str, agent_result, settings) -> RAGTrace | None:
         vector_count=int(t.get("vector_count") or 0),
         lexical_count=int(t.get("lexical_count") or 0),
         candidate_count=int(t.get("candidate_count") or 0),
-        accepted_count=int(t.get("accepted_count") or 0),
+        gate_passed=int(t.get("gate_passed") or 0),
         top_n=top_n,
         ranking_weights=t.get("weights", {}),
         ranking_formula=t.get("formula", ""),
@@ -250,15 +255,18 @@ def ask(req: AskRequest) -> AskResponse:
         raise HTTPException(status_code=400, detail="question is required")
     settings = get_settings()
 
-    agent_result = AgentOrchestrator().run(question)
-    _supplement_largest_change(question, agent_result.sql_results)
+    # Phase 0: deterministic SQL event identification (BEFORE retrieval).
+    sql_results: list[dict] = []
+    _deterministic_sql_phase(question, sql_results)
 
-    # Evidence pipeline: gate-passed → causal-usefulness → diversity.
+    # Phase 1: agent (retrieval + synthesis prep), seeded with the event.
+    agent_result = AgentOrchestrator().run(question, initial_sql_results=sql_results)
+
+    # Phase 2: causal-usefulness → diversity.
     intent = parse_intent(question, agent_result.sql_results)
-    evidence = agent_result.evidence  # all gate-passed chunks
-    if intent.is_causal:
-        evidence = filter_causally_useful(question, evidence[:30])
-    evidence = apply_diversity(evidence, settings.rerank_top_n)
+    gate_passed = agent_result.evidence
+    causally_useful = filter_causally_useful(question, gate_passed[:30]) if intent.is_causal else gate_passed
+    evidence = apply_diversity(causally_useful, settings.rerank_top_n)
 
     answer = Synthesizer().synthesize(question, agent_result.sql_results, evidence)
     grounding = validate_grounding(answer, agent_result.sql_results, evidence)
@@ -269,6 +277,8 @@ def ask(req: AskRequest) -> AskResponse:
         final_ids = {c["id"] for c in evidence}
         for c in trace.chunks:
             c.passed_to_llm = c.chunk_id in final_ids
+        trace.causally_useful = len(causally_useful)
+        trace.evidence_supplied = len(evidence)
     return AskResponse(
         answer=answer,
         citations=citations,
@@ -309,6 +319,8 @@ def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
             "sector": result.intent.sector,
             "event_start": result.intent.event_start.isoformat() if result.intent.event_start else None,
             "event_end": result.intent.event_end.isoformat() if result.intent.event_end else None,
+            "context_start": result.intent.context_start.isoformat() if result.intent.context_start else None,
+            "context_end": result.intent.context_end.isoformat() if result.intent.context_end else None,
             "is_causal": result.intent.is_causal,
         },
         "requested_period": {
@@ -321,7 +333,7 @@ def debug_retrieval(req: RetrieveRequest) -> RetrieveResponse:
         "vector_count": result.vector_count,
         "lexical_count": result.lexical_count,
         "candidate_count": result.candidate_count,
-        "accepted_count": len(result.ranked),
+        "gate_passed": len(result.ranked),
         "top_n": result.top_n,
         "weights": result.weights,
         "formula": result.formula,

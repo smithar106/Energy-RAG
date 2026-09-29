@@ -42,6 +42,8 @@ def _intent_dict(intent) -> dict:
         "sector": intent.sector,
         "event_start": intent.event_start.isoformat() if intent.event_start else None,
         "event_end": intent.event_end.isoformat() if intent.event_end else None,
+        "context_start": intent.context_start.isoformat() if intent.context_start else None,
+        "context_end": intent.context_end.isoformat() if intent.context_end else None,
         "is_causal": intent.is_causal,
     }
 
@@ -101,7 +103,7 @@ def tool_evidence_search(
     public = {
         "retrieval_query": semantic_query,
         "candidate_count": result.candidate_count,
-        "accepted_count": len(result.ranked),
+        "gate_passed": len(result.ranked),
         "insufficient_evidence": len(result.ranked) == 0,
         "chunks": _shape_for_llm(result.ranked),
     }
@@ -113,7 +115,7 @@ def tool_evidence_search(
         "vector_count": result.vector_count,
         "lexical_count": result.lexical_count,
         "candidate_count": result.candidate_count,
-        "accepted_count": len(result.ranked),
+        "gate_passed": len(result.ranked),
         "top_n": result.top_n,
         "weights": result.weights,
         "formula": result.formula,
