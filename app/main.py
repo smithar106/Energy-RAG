@@ -92,7 +92,10 @@ def health() -> dict:
 
 # ── Ask ────────────────────────────────────────────────────────────────────
 _CHANGE_HINT_RE = re.compile(
-    r"\b(biggest|largest|most|greatest|steepest|highest|maximum)\b", re.I
+    r"\b(biggest|largest|most|greatest|steepest|highest|maximum|"
+    r"increase|rise|rose|jump|surge|gain|decrease|drop|fall|decline|"
+    r"change|grew|grow|climbed|climb|movement)\b",
+    re.I,
 )
 _DECREASE_RE = re.compile(r"\b(decrease|drop|fall|decline|loss|lowest|minimum)\b", re.I)
 
