@@ -14,7 +14,7 @@ from app.retrieval.intent import RetrievalIntent
 
 _ELECTRICITY_TERMS = (
     "electric", "power", "price", "generat", "utility", "retail", "coal",
-    "natural gas", "gas", "demand", "weather", "wholesale", "consumer",
+    "natural gas", "demand", "weather", "wholesale", "grid", "transmission",
 )
 
 
