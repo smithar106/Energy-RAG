@@ -13,14 +13,18 @@ import re
 from app.providers.llm import ChatMessage, get_llm_provider
 
 _SYSTEM = (
-    "You are an evidence classifier. Given a question and a list of evidence "
-    "chunks, return the indices (as a JSON array of integers) of the chunks that "
-    "CAUSALLY support explaining the price movement in the question. A chunk is "
-    "causally useful only if it connects a concrete market factor (fuel cost, "
-    "generation cost, demand, weather, supply, policy, etc.) to the specific "
-    "price movement or time period in the question. Exclude topically-related "
-    "but generic content, unrelated domains, and different periods. If none "
-    "causally support an explanation, return []. Respond with ONLY a JSON array."
+    "You are a strict evidence classifier for causal explanation. Given a question "
+    "and a list of evidence chunks, return the indices (as a JSON array of integers) "
+    "of the chunks that DIRECTLY and CAUSALLY explain the price movement in the "
+    "question. A chunk qualifies ONLY if it identifies a concrete market factor "
+    "(fuel cost, generation cost, demand, weather, supply, policy, etc.) that moved "
+    "the price in the SAME direction and SAME time period as the question.\n\n"
+    "You MUST exclude:\n"
+    "- forecasts, projections, or expectations (they do not explain a past movement)\n"
+    "- chunks describing the OPPOSITE direction (a decline when asked about a rise)\n"
+    "- chunks about a different time period than the question\n"
+    "- generic or topically-related context without a specific causal link\n\n"
+    "If none causally explain the movement, return []. Respond with ONLY a JSON array."
 )
 
 
