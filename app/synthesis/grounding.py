@@ -116,7 +116,9 @@ def _numeric_claims(answer: str) -> list[tuple[str, float]]:
     claims: list[tuple[str, float]] = []
     for m in re.finditer(r"(-?\d+(?:\.\d+)?)", text):
         raw = m.group(0)
-        if _YEAR_RE.search(raw) and len(raw) == 4:
+        digits = raw.lstrip("-")
+        # Skip 4-digit years (and the "-2017" artifact from "2016-2017" ranges).
+        if len(digits) == 4 and _YEAR_RE.search(digits):
             continue
         claims.append((raw, round(float(raw), 4)))
     return claims
