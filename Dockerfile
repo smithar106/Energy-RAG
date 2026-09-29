@@ -37,7 +37,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Copy application code.
 COPY . .
 
-# Expose the FastAPI/uvicorn port (must match the Railway domain target port).
-EXPOSE 8000
+# Bind to Railway's $PORT (defaults to 8080; local docker-compose maps 8080).
+EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
