@@ -25,7 +25,7 @@ from app.synthesis.citations import citation_markers
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 _CITE_RE = re.compile(r"\[\d+\]")
 _DATE_RE = re.compile(r"\b\d{4}-\d{2}(-\d{2})?\b")
-_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+_PCT_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*%")
 _CAUSAL_RE = re.compile(
     r"\b(because|due to|as a result of|driven by|owing to|attributed to|"
     r"caused by|resulted in|pushed up|contributed to|led to)\b",
@@ -114,7 +114,7 @@ def _numeric_claims(answer: str) -> list[tuple[str, float]]:
     text = _CITE_RE.sub(" ", answer or "")
     text = _DATE_RE.sub(" ", text)  # strip ISO dates so day/month aren't read as numbers
     claims: list[tuple[str, float]] = []
-    for m in re.finditer(r"(\d+(?:\.\d+)?)", text):
+    for m in re.finditer(r"(-?\d+(?:\.\d+)?)", text):
         raw = m.group(0)
         if _YEAR_RE.search(raw) and len(raw) == 4:
             continue
